@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import PromptTextAreaComponent from '@/components/core/parameterRenderComponent/components/promptTextAreaComponent';
 import { Card, CardHeader, CardContent } from "@/components/ui/card";
 import { motion, AnimatePresence } from "framer-motion";
-
+import { IconBrain} from '@tabler/icons-react';
 const ProTipsCard = () => (
     <Card className="bg-blue-50/80 border-blue-100 dark:bg-blue-950/10 dark:border-blue-900/20">
         <CardHeader className="pb-2">
@@ -80,7 +80,10 @@ export default function GuidedAiAgentCoreInstructions({ prompt, setPrompt }) {
             <BaseModal.Header
                 description="Describe how your agent should work. It's recommended to provide examples of tasks it might receive and what to do."
             >
-                Core instructions
+                <span className="flex items-center gap-2">
+                    <IconBrain className="w-5 h-5" />
+                    Core instructions
+                </span>
             </BaseModal.Header>
 
             <div className="flex flex-col">

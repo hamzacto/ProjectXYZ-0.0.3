@@ -6,6 +6,7 @@ import axios from 'axios';
 import { AlertCircle, CheckCircle2, Mail, Play, Plus, Trash2, XCircle, Loader2, Bell, BellOff } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Card, CardHeader, CardContent, CardDescription } from '@/components/ui/card';
+import { useDarkStore } from '@/stores/darkStore';
 import {
     Dialog,
     DialogContent,
@@ -13,9 +14,16 @@ import {
     DialogTitle,
     DialogDescription,
 } from "@/components/ui/dialog";
+import {
+    Tooltip,
+    TooltipContent,
+    TooltipProvider,
+    TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { motion, AnimatePresence } from 'framer-motion';
 import ForwardedIconComponent from '@/components/common/genericIconComponent';
 import BaseModal from '@/modals/baseModal';
+import { IconAdjustments, IconBell } from '@tabler/icons-react';
 
 interface IntegrationDetails {
     id: string;
@@ -35,6 +43,16 @@ interface GuidedAgentTriggersProps {
     setSelectedTriggers: React.Dispatch<React.SetStateAction<string[]>>;
 }
 
+const cardVariants = {
+    hidden: { opacity: 0, y: 20 },
+    visible: { opacity: 1, y: 0 }
+};
+
+const listItemVariants = {
+    hidden: { opacity: 0 },
+    visible: { opacity: 1 }
+};
+
 export default function GuidedAgentTriggers({ onTriggersChange, selectedTriggers, setSelectedTriggers }: GuidedAgentTriggersProps) {
     const [integrations, setIntegrations] = useState<IntegrationDetails[]>([]);
     const [loading, setLoading] = useState(true);
@@ -48,6 +66,7 @@ export default function GuidedAgentTriggers({ onTriggersChange, selectedTriggers
         headers: useIntegrationStore.getState().getAuthHeaders(),
         withCredentials: true
     });
+    const dark = useDarkStore((state) => state.dark);
 
     const fetchIntegrations = async () => {
         setLoading(true);
@@ -105,169 +124,201 @@ export default function GuidedAgentTriggers({ onTriggersChange, selectedTriggers
     };
 
     const getStatusIcon = (status: string) => {
-        switch (status) {
-            case 'active':
-                return <CheckCircle2 className="h-4 w-4 text-green-500" />;
-            case 'expired':
-                return <AlertCircle className="h-4 w-4 text-yellow-500" />;
-            case 'error':
-                return <XCircle className="h-4 w-4 text-red-500" />;
-            default:
-                return null;
-        }
+        const icons = {
+            active: {
+                icon: <CheckCircle2 className="h-4 w-4 text-green-500" />,
+                tooltip: "Integration is active and working"
+            },
+            expired: {
+                icon: <AlertCircle className="h-4 w-4 text-yellow-500" />,
+                tooltip: "Integration has expired"
+            },
+            error: {
+                icon: <XCircle className="h-4 w-4 text-red-500" />,
+                tooltip: "Error with integration"
+            }
+        };
+
+        const statusData = icons[status as keyof typeof icons];
+        if (!statusData) return null;
+
+        return (
+            <TooltipProvider>
+                <Tooltip>
+                    <TooltipTrigger>{statusData.icon}</TooltipTrigger>
+                    <TooltipContent>
+                        <p>{statusData.tooltip}</p>
+                    </TooltipContent>
+                </Tooltip>
+            </TooltipProvider>
+        );
     };
 
     return (
-        <div className="flex flex-1 flex-col gap-6 overflow-hidden">
-            <div className="flex-none mb-4">
+        <div className="flex flex-1 flex-col overflow-hidden">
+            <div className="flex-none border-b border-gray-100 dark:border-gray-800 pb-4">
                 <BaseModal.Header description="Enable task creation for your agent from external sources like emails or WhatsApp, allowing seamless threading into the same task.">
-                    Configure Triggers
-
+                    <span className="flex items-center gap-2">
+                        <IconBell className="w-5 h-5" />
+                        Configure Triggers
+                    </span>
                 </BaseModal.Header>
             </div>
 
-            <div className="flex-1 overflow-y-auto space-y-6 pb-4">
-
-                <Card>
-                    <CardHeader>
-                        <h3 className="text-lg font-semibold">Active Triggers</h3>
-                        <CardDescription>
-                            Currently active integrations that will create tasks for this agent
-                        </CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                        {loading ? (
-                            <div className="flex items-center justify-center py-8">
-                                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            <div className="flex-1 overflow-y-auto py-4">
+                <div className="space-y-8">
+                    <motion.div
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.2 }}
+                    >
+                        <div className="space-y-2">
+                            <div className="space-y-1">
+                                <h2 className="text-l font-semibold text-gray-900 dark:text-gray-100">Active Triggers</h2>
+                                <p className="text-sm text-gray-500 dark:text-gray-400">
+                                    Currently active integrations that will create tasks for this agent
+                                </p>
                             </div>
-                        ) : getActiveIntegrations().length > 0 ? (
-                            <div className="grid gap-2">
-                                {getActiveIntegrations().map(integration => (
-                                    <motion.div
-                                        key={integration.id}
-                                        initial={{ opacity: 0, x: -20 }}
-                                        animate={{ opacity: 1, x: 0 }}
-                                        exit={{ opacity: 0, x: 20 }}
-                                    >
-                                        <Card className="p-3 hover:bg-muted/50 transition-colors">
-                                            <div className="flex items-center justify-between">
-                                                <div className="flex items-center gap-2">
-                                                    <ForwardedIconComponent name="Gmail" className="h-4 w-4" />
-                                                    {getStatusIcon(integration.status)}
-                                                    <span className="text-sm font-medium">{integration.email}</span>
+                            
+                            <div className="pt-4 space-y-2">
+                                {loading ? (
+                                    <div className="flex items-center justify-center py-8">
+                                        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                                    </div>
+                                ) : getActiveIntegrations().length > 0 ? (
+                                    <div className="space-y-2">
+                                        {getActiveIntegrations().map(integration => (
+                                            <motion.div
+                                                key={integration.id}
+                                                initial={{ opacity: 0 }}
+                                                animate={{ opacity: 1 }}
+                                                transition={{ duration: 0.2 }}
+                                            >
+                                                <div className="flex items-center justify-between p-4 rounded-lg bg-white dark:bg-[#27272a] border border-gray-100 dark:border-gray-700">
+                                                    <div className="flex items-center gap-2">
+                                                        <ForwardedIconComponent name="Gmail" className="h-5 w-5 text-gray-600 dark:text-gray-400" />
+                                                        {getStatusIcon(integration.status)}
+                                                        <span className="text-sm dark:text-gray-300">{integration.email}</span>
+                                                    </div>
+                                                    <TooltipProvider>
+                                                        <Tooltip>
+                                                            <TooltipTrigger asChild>
+                                                                <Button
+                                                                    variant="ghost"
+                                                                    size="sm"
+                                                                    onClick={() => handleDeleteTrigger(integration.id)}
+                                                                    className="hover:text-destructive transition-colors duration-200"
+                                                                >
+                                                                    <Trash2 className="h-4 w-4" />
+                                                                </Button>
+                                                            </TooltipTrigger>
+                                                            <TooltipContent>
+                                                                <p>Remove trigger</p>
+                                                            </TooltipContent>
+                                                        </Tooltip>
+                                                    </TooltipProvider>
                                                 </div>
-                                                <Button
-                                                    variant="ghost"
-                                                    size="sm"
-                                                    onClick={() => handleDeleteTrigger(integration.id)}
-                                                    className="hover:text-destructive"
-                                                >
-                                                    <Trash2 className="h-4 w-4" />
-                                                </Button>
-                                            </div>
-                                        </Card>
-                                    </motion.div>
-                                ))}
+                                            </motion.div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <div className="flex items-center justify-center p-8 rounded-lg border border-dashed border-gray-200 dark:border-gray-700 dark:bg-[#27272a]">
+                                        <div className="text-center space-y-2">
+                                            <BellOff className="mx-auto h-8 w-8 text-gray-400 dark:text-gray-600" />
+                                            <p className="text-sm text-gray-500 dark:text-gray-400">No active triggers</p>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
-                        ) : (
-                            <Card className="flex items-center justify-center p-8 text-center">
-                                <div className="space-y-3">
-                                    <BellOff className="mx-auto h-8 w-8 text-muted-foreground opacity-50" />
-                                    <p className="text-muted-foreground">No active triggers</p>
-                                </div>
-                            </Card>
-                        )}
-                    </CardContent>
-                </Card>
+                        </div>
+                    </motion.div>
 
-                <div className="space-y-2">
-                    <h3 className="text-lg font-semibold px-2">Available Triggers</h3>
-                    <div className="flex flex-wrap gap-4 pb-2 px-2">
-                        <Card className="w-[calc(50%-0.5rem)] min-w-[300px]">
-                            <CardHeader>
-                                <div className="flex items-start justify-between">
-                                    <div>
-                                        <h3 className="text-lg font-semibold">Gmail</h3>
-                                        <CardDescription>
-                                            Connect Gmail accounts to create automated workflows
-                                        </CardDescription>
+                    <motion.div
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.2 }}
+                    >
+                        <div className="space-y-4">
+                            <div className="space-y-1">
+                                <h2 className="text-l font-semibold text-gray-900 dark:text-gray-100">Available Triggers</h2>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+                                <div className="group rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#27272a] p-6 transition-all duration-200 hover:shadow-sm">
+                                    <div className="flex items-start justify-between mb-4">
+                                        <div>
+                                            <h3 className="text-base font-semibold dark:text-gray-100">Gmail</h3>
+                                            <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                                                Connect Gmail accounts to create automated workflows
+                                            </p>
+                                        </div>
+                                        <ForwardedIconComponent name="Gmail" className="h-6 w-6 text-gray-600 dark:text-gray-400" />
                                     </div>
-                                    <ForwardedIconComponent name="Gmail" className="h-6 w-6" />
+                                    <Button
+                                        variant="outline"
+                                        className="w-full justify-start gap-2"
+                                        onClick={() => setDialogOpen(true)}
+                                    >
+                                        <Plus className="h-4 w-4" />
+                                        Add Gmail Trigger
+                                    </Button>
                                 </div>
-                            </CardHeader>
-                            <CardContent>
-                                <Button
-                                    variant="outline"
-                                    className="w-full justify-start gap-2 hover:bg-muted"
-                                    onClick={() => setDialogOpen(true)}
-                                >
-                                    <Plus className="h-4 w-4" />
-                                    Add Gmail Trigger
-                                </Button>
-                            </CardContent>
-                        </Card>
 
-                        <Card className="w-[calc(50%-0.5rem)] min-w-[300px]">
-                            <CardHeader>
-                                <div className="flex items-start justify-between">
-                                    <div>
-                                        <h3 className="text-lg font-semibold">WhatsApp</h3>
-                                        <CardDescription>
-                                            Connect WhatsApp accounts to create automated workflows
-                                        </CardDescription>
+                                <div className="group rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#27272a] p-6 transition-all duration-200 hover:shadow-sm">
+                                    <div className="flex items-start justify-between mb-4">
+                                        <div>
+                                            <h3 className="text-base font-semibold dark:text-gray-100">WhatsApp</h3>
+                                            <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                                                Connect WhatsApp accounts to create automated workflows
+                                            </p>
+                                        </div>
+                                        <ForwardedIconComponent name="WhatsApp" className="h-6 w-6 text-gray-600 dark:text-gray-400" />
                                     </div>
-                                    <ForwardedIconComponent name="WhatsApp" className="h-6 w-6" />
+                                    <Button
+                                        variant="outline"
+                                        className="w-full justify-start gap-2"
+                                    >
+                                        <Plus className="h-4 w-4" />
+                                        Add WhatsApp Trigger
+                                    </Button>
                                 </div>
-                            </CardHeader>
-                            <CardContent>
-                                <Button
-                                    variant="outline"
-                                    className="w-full justify-start gap-2 hover:bg-muted"
-                                >
-                                    <Plus className="h-4 w-4" />
-                                    Add WhatsApp Trigger
-                                </Button>
-                            </CardContent>
-                        </Card>
-
-                    </div>
+                            </div>
+                        </div>
+                    </motion.div>
                 </div>
             </div>
 
             <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-                <DialogContent className="max-w-xl">
+                <DialogContent className="max-w-xl dark:bg-[#27272a] dark:border-gray-700">
                     <DialogHeader>
-                        <DialogTitle>Select Gmail Account</DialogTitle>
-                        <DialogDescription>
+                        <DialogTitle className="dark:text-gray-100">Select Gmail Account</DialogTitle>
+                        <DialogDescription className="dark:text-gray-400">
                             Choose an account to create a new trigger
                         </DialogDescription>
                     </DialogHeader>
 
                     <div className="max-h-[60vh] overflow-y-auto">
                         <div className="space-y-4 pr-4">
-
                             {getInactiveIntegrations().length === 0 ? (
-                                <Card className="flex items-center justify-center p-4 text-center">
+                                <Card className="flex items-center justify-center p-4 text-center dark:bg-[#27272a] dark:border-gray-600">
                                     <div className="space-y-3">
                                         <Mail className="mx-auto h-12 w-12 text-muted-foreground opacity-50" />
-                                        <p className="text-muted-foreground">No available Gmail accounts</p>
+                                        <p className="text-muted-foreground dark:text-gray-400">No available Gmail accounts</p>
                                     </div>
                                 </Card>
                             ) : (
                                 getInactiveIntegrations().map((integration) => (
-                                    <Card key={integration.id} className="p-4">
+                                    <Card key={integration.id} className="p-4 dark:bg-[#27272a] dark:border-gray-600">
                                         <div className="flex items-start justify-between">
                                             <div className="space-y-3">
                                                 <div className="flex items-center gap-2">
-                                                    {getStatusIcon(integration.status)}
-                                                    <span className="font-medium">{integration.email}</span>
+                                                    <span className="font-medium dark:text-gray-200">{integration.email}</span>
                                                 </div>
                                                 <div className="flex flex-wrap gap-2">
                                                     {integration.permissions.map((permission) => (
                                                         <Badge
                                                             key={permission}
                                                             variant="secondary"
-                                                            className="text-xs"
+                                                            className="text-xs dark:bg-gray-600 dark:text-gray-300"
                                                         >
                                                             {permission}
                                                         </Badge>
@@ -281,6 +332,7 @@ export default function GuidedAgentTriggers({ onTriggersChange, selectedTriggers
                                                     createTrigger(integration.id);
                                                     setDialogOpen(false);
                                                 }}
+                                                className="dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-600"
                                             >
                                                 Select Account
                                             </Button>
@@ -294,9 +346,9 @@ export default function GuidedAgentTriggers({ onTriggersChange, selectedTriggers
             </Dialog>
 
             <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-                <DialogContent>
+                <DialogContent className="dark:bg-[#27272a] dark:border-gray-700">
                     <DialogHeader>
-                        <DialogTitle>
+                        <DialogTitle className="dark:text-gray-100">
                             <div className="flex items-center">
                                 <span className="pr-2">Delete Trigger</span>
                                 <Trash2
@@ -306,16 +358,16 @@ export default function GuidedAgentTriggers({ onTriggersChange, selectedTriggers
                             </div>
                         </DialogTitle>
                     </DialogHeader>
-                    <span>
+                    <span className="dark:text-gray-300">
                         Are you sure you want to delete this trigger?{" "}
                     </span>
-                    <span>
+                    <span className="dark:text-gray-300">
                         Note: This action is irreversible.
                     </span>
                     <div className="flex justify-end gap-4 mt-4">
                         <Button
                             variant="outline"
-
+                            className="dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-600"
                             onClick={() => {
                                 setDeleteDialogOpen(false);
                                 setTriggerToDelete(null);
@@ -332,6 +384,6 @@ export default function GuidedAgentTriggers({ onTriggersChange, selectedTriggers
                     </div>
                 </DialogContent>
             </Dialog>
-        </div >
+        </div>
     );
 }

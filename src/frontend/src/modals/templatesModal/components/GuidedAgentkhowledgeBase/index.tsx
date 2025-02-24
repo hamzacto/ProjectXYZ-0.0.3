@@ -27,7 +27,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-
+import { IconBook, IconDatabase } from '@tabler/icons-react';
 interface FileUploadProps {
   fileCategories: FileCategory[];
   setFileCategories: React.Dispatch<React.SetStateAction<FileCategory[]>>;
@@ -226,7 +226,10 @@ export default function KnowledgeBaseFilesUpload({
   return (
     <div className="flex flex-1 flex-col gap-4 md:gap-8 h-[calc(100vh-200px)]">
       <BaseModal.Header description="Upload your documents and files to train your AI agent. Supported formats: PDF, TXT, DOC, DOCX">
-        Knowledge Base
+        <span className="flex items-center gap-2">
+            <IconDatabase className="w-5 h-5" />
+            Knowledge Base
+        </span>
       </BaseModal.Header>
 
       {error && (

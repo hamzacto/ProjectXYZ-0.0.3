@@ -36,6 +36,7 @@ import { CategoryDisclosure } from "@/pages/FlowPage/components/flowSidebarCompo
 import BaseModal from "@/modals/baseModal";
 import "./style.css";
 import { ToolsLinkCategoryDisclosure } from "../ToolsLinkCategoryDisclosure";
+import { IconHammer } from "@tabler/icons-react";
 
 const CATEGORIES = SIDEBAR_CATEGORIES;
 const BUNDLES = SIDEBAR_BUNDLES;
@@ -167,7 +168,10 @@ export function GuidedAgentsToolsLinkComponent({
     return (
         <div className="flex flex-1 flex-col gap-4">
             <BaseModal.Header description="Give your agent the tools it needs to achieve its goal.">
-                Connect New Tool
+                <span className="flex items-center gap-2">
+                    <IconHammer className="w-5 h-5" />
+                    Connect New Tool
+                </span>
             </BaseModal.Header>
             <ToolsLinkCategoryDisclosure
                 item={{ display_name: "Tools", name: "tools", icon: "Hammer" }}

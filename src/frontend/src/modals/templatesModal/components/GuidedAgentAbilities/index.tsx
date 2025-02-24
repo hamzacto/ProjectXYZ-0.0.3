@@ -2,12 +2,15 @@ import React from 'react';
 import BaseModal from "@/modals/baseModal";
 import { Input } from '@/components/ui/input'; // Adjust the path as necessary
 import TextAreaComponent from '@/components/core/parameterRenderComponent/components/textAreaComponent'; // Adjust the path as necessary
-
+import { IconBrain } from '@tabler/icons-react';
 export default function GuidedAgentAbilities() {
     return (
             <div className="flex flex-1 flex-col gap-4 md:gap-8">
                 <BaseModal.Header description="Describe how your agent should work. It's recommended to provide examples of tasks it might receive and what to do.">
-                    Core instructions
+                    <span className="flex items-center gap-2">
+                        <IconBrain className="w-5 h-5" />
+                        Core instructions
+                    </span>
                 </BaseModal.Header>
                 <div className="flex flex-col gap-4">
                     <div className="flex flex-col gap-2">

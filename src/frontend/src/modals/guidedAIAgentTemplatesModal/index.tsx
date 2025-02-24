@@ -49,6 +49,8 @@ import GuidedAgentIntegrations from "../templatesModal/components/GuidedAgentInt
 import GuidedAgentTriggers from "../templatesModal/components/GuidedAgentTriggers";
 import { useIntegrationStore } from "@/stores/integrationStore";
 import GuidedAgentAIAgentAdvancedSettings from "../templatesModal/components/GuidedAgentAIAgentAdvancedSettings";
+import { GuidedAgentNavComponent } from "../templatesModal/components/GuidedAgentNavComponent";
+import GuidedAgentModal from "../guidedAgentModal";
 
 
 export default function GuidedAIAgentTemplatesModal({
@@ -77,6 +79,17 @@ export default function GuidedAIAgentTemplatesModal({
     const [activeCategory, setActiveCategory] = useState('default'); // Add activeCategory state
 
     const [selectedTriggers, setSelectedTriggers] = useState<string[]>([]);
+
+    const [advancedSettings, setAdvancedSettings] = useState({
+        temperature: 0.7,
+        modelName: "gpt-3.5-turbo",
+        maxRetries: 5,
+        timeout: 700,
+        seed: 42,
+        jsonMode: false,
+        maxTokens: 1000,
+        handleParseErrors: true
+    });
 
     const handleTriggersChange = (triggers: string[]) => {
         setSelectedTriggers(triggers);
@@ -1324,14 +1337,15 @@ export default function GuidedAIAgentTemplatesModal({
 
 
     return (
-        <BaseModal size="templates" open={open} setOpen={setOpen} className="p-0">
-            <BaseModal.Content overflowHidden className="flex flex-col p-0">
+        <GuidedAgentModal size="x-large" open={open} setOpen={setOpen} className="p-0">
+            <GuidedAgentModal.Content overflowHidden className="flex flex-col p-0">
                 <div className="flex h-full">
                     <SidebarProvider width="15rem" defaultOpen={false}>
-                        <Nav
+                        <GuidedAgentNavComponent
                             categories={tabCategories}
                             currentTab={currentTab}
                             setCurrentTab={setCurrentTab}
+                            agentName={name}
                         />
                         <main className="flex flex-1 flex-col gap-4 overflow-hidden p-6 md:gap-8">
                             {currentTab === "guided-ai-agent" ? (
@@ -1448,19 +1462,22 @@ export default function GuidedAIAgentTemplatesModal({
                                     setSelectedTriggers={setSelectedTriggers}
                                 />
                             ) : currentTab === "advanced-settings" ? (
-                                <GuidedAgentAIAgentAdvancedSettings />
+                                <GuidedAgentAIAgentAdvancedSettings
+                                    settings={advancedSettings}
+                                    onSettingsChange={setAdvancedSettings}
+                                />
                             ) : (
                                 <TemplateContentComponent
                                     currentTab={currentTab}
                                     categories={tabCategories.flatMap((category) => category.items)}
                                 />
                             )}
-                            <BaseModal.Footer>
+                            <GuidedAgentModal.Footer>
                                 <div className="flex w-full flex-col justify-between gap-4 pb-4 sm:flex-row sm:items-center">
                                     <div className="flex flex-col items-start justify-center">
-                                        <div className="font-semibold">Start from scratch</div>
+                                        <div className="font-semibold">Launch your AI Agent</div>
                                         <div className="text-sm text-muted-foreground">
-                                            Begin with a fresh flow to build from scratch.
+                                            Configure your agent's behavior, knowledge, and capabilities
                                         </div>
                                     </div>
                                     <Button
@@ -1476,12 +1493,12 @@ export default function GuidedAIAgentTemplatesModal({
                                         Create
                                     </Button>
                                 </div>
-                            </BaseModal.Footer>
+                            </GuidedAgentModal.Footer>
                         </main>
                     </SidebarProvider>
                 </div>
-            </BaseModal.Content>
+            </GuidedAgentModal.Content>
             <GuidedAgentForm open={isGuidedAgentFormOpen} setOpen={setIsGuidedAgentFormOpen} />
-        </BaseModal>
+        </GuidedAgentModal>
     );
 }
