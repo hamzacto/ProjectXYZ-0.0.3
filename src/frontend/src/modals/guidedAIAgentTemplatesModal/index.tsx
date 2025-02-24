@@ -1130,12 +1130,28 @@ export default function GuidedAIAgentTemplatesModal({
                                             ...node.data.node.template,
                                             model_name: {
                                                 ...node.data.node.template.model_name,
-                                                value: "gpt-3.5-turbo",
+                                                value: advancedSettings.modelName,
                                             },
                                             temperature: {
                                                 ...node.data.node.template.temperature,
-                                                value: 0.25,
+                                                value: advancedSettings.temperature,
                                             },
+                                            json_mode: {
+                                                ...node.data.node.template.json_mode,
+                                                value: advancedSettings.jsonMode,
+                                            },
+                                            max_tokens: {
+                                                ...node.data.node.template.max_tokens,
+                                                value: advancedSettings.maxTokens,
+                                            },
+                                            timeout: {  
+                                                ...node.data.node.template.timeout,
+                                                value: advancedSettings.timeout,
+                                            },
+                                            seed: {
+                                                ...node.data.node.template.seed,
+                                                value: advancedSettings.seed,   
+                                            }
                                         }
                                     }
                                 }
@@ -1179,6 +1195,29 @@ export default function GuidedAIAgentTemplatesModal({
                                 }
                             } as AllNodeType;
                         }
+
+                        if(node.data.id.includes("OpenAIToolsAgent")) {
+                            return {
+                                ...node,
+                                data: {
+                                    ...node.data,
+                                    node: {
+                                        ...node.data.node,
+                                        template: {
+                                            ...node.data.node.template,
+                                            max_iterations: {
+                                                ...node.data.node.template.max_iterations,
+                                                value: advancedSettings.maxRetries,
+                                            },
+                                            handle_parsing_errors: {
+                                                ...node.data.node.template.handle_parsing_errors,
+                                                value: advancedSettings.handleParseErrors,
+                                            }
+                                        }
+                                    }
+                                }
+                            } as AllNodeType;
+                        }   
 
                         const modifyNode = (field, value) => {
                             updatedNode.data.node.template[field] = {
