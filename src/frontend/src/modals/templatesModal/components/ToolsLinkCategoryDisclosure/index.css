@@ -1,0 +1,138 @@
+.tools-link-category-container {
+    display: flex;
+    gap: 1rem;
+    padding: 0.25rem;
+    height: 400px;
+    min-height: 400px;
+    max-height: 400px;
+    width: 100%;
+  }
+  
+  .tools-link-category {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    overflow: hidden;
+    background-color: var(--background);
+    border-radius: 0.5rem;
+  }
+  
+  /* Already Added Tool Style */
+  .tool-already-added {
+    position: relative;
+    background-color: var(--muted);
+    border-left: 2px solid var(--primary);
+  }
+  
+  .tool-already-added::after {
+    content: "Added";
+    position: absolute;
+    right: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 0.75rem;
+    color: var(--muted-foreground);
+    padding: 2px 8px;
+    border-radius: 4px;
+    background-color: var(--accent);
+  }
+  
+  .tool-already-added:hover {
+    background-color: var(--accent);
+  }
+  
+  /* Add Button Animation */
+  .add-button {
+    opacity: 0;
+    transition: opacity 0.2s ease-in-out;
+  }
+  
+  .tool-item:hover .add-button {
+    opacity: 1;
+  }
+  
+  /* Add Animation */
+  @keyframes toolAdded {
+    0% {
+      transform: scale(1);
+    }
+    50% {
+      transform: scale(1.02);
+    }
+    100% {
+      transform: scale(1);
+    }
+  }
+  
+  .tool-added {
+    animation: toolAdded 0.3s ease-in-out;
+  }
+  
+  .tool-item {
+    position: relative;
+    transition: all 0.2s ease-in-out;
+    border-left: 2px solid transparent;
+    min-height: 68px; /* Increased to accommodate description */
+    padding: 0.75rem;
+    display: flex;
+    align-items: center;
+  }
+  
+  .tool-item.added {
+    background-color: var(--muted);
+    border-left-color: var(--primary);
+    animation: toolAdded 0.3s ease-in-out;
+  }
+  
+  /* Status Badge */
+  .tool-status {
+    position: absolute;
+    right: 48px; /* Adjusted to not overlap with menu */
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 0.75rem;
+    color: var(--muted-foreground);
+    padding: 2px 8px;
+    border-radius: 4px;
+    background-color: var(--accent);
+    opacity: 0;
+    pointer-events: none;
+    transition: all 0.2s ease-in-out;
+  }
+  
+  .tool-item.added .tool-status {
+    opacity: 1;
+    animation: slideIn 0.3s ease-in-out forwards;
+  }
+  
+  @keyframes slideIn {
+    from {
+      transform: translateY(-50%) translateX(10px);
+      opacity: 0;
+    }
+    to {
+      transform: translateY(-50%) translateX(0);
+      opacity: 1;
+    }
+  }
+  
+  @keyframes toolAdded {
+    0% {
+      transform: scale(1);
+    }
+    50% {
+      transform: scale(1.02);
+    }
+    100% {
+      transform: scale(1);
+    }
+  }
+  
+  /* Hover states */
+  .tool-item:hover .add-button {
+    opacity: 1;
+  }
+  
+  .tool-item.added:hover {
+    background-color: var(--accent);
+  }

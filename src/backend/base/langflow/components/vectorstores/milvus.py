@@ -36,7 +36,7 @@ class MilvusVectorStoreComponent(LCVectorStoreComponent):
             info="Ignore this field if no token is required to make connection.",
         ),
         DictInput(name="connection_args", display_name="Other Connection Arguments", advanced=True),
-        StrInput(name="primary_field", display_name="Primary Field Name", value="pk"),
+        StrInput(name="primary_field", display_name="Primary Field Name", value="id"),
         StrInput(name="text_field", display_name="Text Field Name", value="text"),
         StrInput(name="vector_field", display_name="Vector Field Name", value="vector"),
         DropdownInput(

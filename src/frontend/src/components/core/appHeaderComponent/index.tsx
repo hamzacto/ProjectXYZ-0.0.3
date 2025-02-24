@@ -90,8 +90,29 @@ export default function AppHeader(): JSX.Element {
       <div
         className={`flex items-center gap-2`}
         data-testid="header_right_section_wrapper"
+      ><ShadTooltip
+        content="Set Up Integrations"
+        side="bottom"
+        styleClasses="z-10"
       >
-        {!ENABLE_DATASTAX_LANGFLOW && (
+          <Button
+            variant="ghost"
+            className={` ${lastPath === "integrations" ? "bg-accent text-accent-foreground" : ""}`}
+            onClick={() => {
+              navigate("/integrations");
+            }}
+            data-testid="button-key"
+          >
+            <ForwardedIconComponent
+              name="Key"
+              className="side-bar-button-size h-[18px] w-[18px]"
+            />
+            <span className="hidden whitespace-nowrap 2xl:inline">
+              Integrations
+            </span>
+          </Button>
+        </ShadTooltip>
+        {/* {!ENABLE_DATASTAX_LANGFLOW && (
           <>
             <Button
               unstyled
@@ -103,7 +124,7 @@ export default function AppHeader(): JSX.Element {
               <GithubStarComponent />
             </Button>
           </>
-        )}
+        )} */}
         <AlertDropdown
           notificationRef={notificationContentRef}
           onClose={() => setActiveState(null)}

@@ -65,7 +65,7 @@ reinstall_backend: ## forces reinstall all dependencies (no caching)
 
 install_backend: ## install the backend dependencies
 	@echo 'Installing backend dependencies'
-	@uv sync --frozen
+	@uv sync --frozen --extra deploy
 
 install_frontend: ## install the frontend dependencies
 	@echo 'Installing frontend dependencies'
@@ -277,7 +277,6 @@ ifdef login
 		--factory langflow.main:create_app \
 		--host 0.0.0.0 \
 		--port $(port) \
-		$(if $(filter-out 1,$(workers)),, --reload) \
 		--env-file $(env) \
 		--loop asyncio \
 		$(if $(workers),--workers $(workers),)
@@ -287,7 +286,6 @@ else
 		--factory langflow.main:create_app \
 		--host 0.0.0.0 \
 		--port $(port) \
-		$(if $(filter-out 1,$(workers)),, --reload) \
 		--env-file $(env) \
 		--loop asyncio \
 		$(if $(workers),--workers $(workers),)

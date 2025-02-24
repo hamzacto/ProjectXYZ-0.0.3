@@ -12,6 +12,8 @@ from langflow.api.v1.store import router as store_router
 from langflow.api.v1.users import router as users_router
 from langflow.api.v1.validate import router as validate_router
 from langflow.api.v1.variable import router as variables_router
+from langflow.api.v1.integrations import router as integrations_router
+from langflow.api.v1.vectorstore import router as vectorstore_router
 
 __all__ = [
     "api_key_router",
@@ -28,4 +30,6 @@ __all__ = [
     "users_router",
     "validate_router",
     "variables_router",
+    "integrations_router",
+    "vectorstore_router",
 ]

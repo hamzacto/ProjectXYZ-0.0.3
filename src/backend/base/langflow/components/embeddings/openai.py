@@ -4,7 +4,9 @@ from langflow.base.embeddings.model import LCEmbeddingsModel
 from langflow.base.models.openai_constants import OPENAI_EMBEDDING_MODEL_NAMES
 from langflow.field_typing import Embeddings
 from langflow.io import BoolInput, DictInput, DropdownInput, FloatInput, IntInput, MessageTextInput, SecretStrInput
+import os
 
+api_key = os.getenv("OPENAI_API_KEY")
 
 class OpenAIEmbeddingsComponent(LCEmbeddingsModel):
     display_name = "OpenAI Embeddings"
@@ -38,7 +40,7 @@ class OpenAIEmbeddingsComponent(LCEmbeddingsModel):
             value="text-embedding-3-small",
         ),
         DictInput(name="model_kwargs", display_name="Model Kwargs", advanced=True),
-        SecretStrInput(name="openai_api_key", display_name="OpenAI API Key", value="OPENAI_API_KEY", required=True),
+        SecretStrInput(name="openai_api_key", display_name="OpenAI API Key", value="OPENAI_API_KEY", required=False),
         MessageTextInput(name="openai_api_base", display_name="OpenAI API Base", advanced=True),
         MessageTextInput(name="openai_api_type", display_name="OpenAI API Type", advanced=True),
         MessageTextInput(name="openai_api_version", display_name="OpenAI API Version", advanced=True),
@@ -73,6 +75,7 @@ class OpenAIEmbeddingsComponent(LCEmbeddingsModel):
     ]
 
     def build_embeddings(self) -> Embeddings:
+        self.openai_api_key = api_key
         return OpenAIEmbeddings(
             client=self.client or None,
             model=self.model,

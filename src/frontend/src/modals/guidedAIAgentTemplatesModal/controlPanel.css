@@ -1,0 +1,38 @@
+.buttonStyle {
+    padding: 0px;
+    margin: 5px;
+    color: #83838c;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    background-color: transparent;
+    /* Transparent background for minimal design */
+    transition: background-color 0.2s ease-in-out, transform 0.1s ease;
+}
+
+.iconControl {
+    color: #83838c;
+    width: 1em;
+    height: 1em;
+    margin: 4px;
+}
+
+.wrapperStyle {
+    display: flex;
+    gap: 4px;
+    padding: 1px;
+    background-color: #fafafa;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    align-items: center;
+    justify-content: center;
+}
+
+.buttonStyle:hover {
+    background-color: #9b9595cd;
+}
+
+.react-flow__attribution {
+    display: none;
+}

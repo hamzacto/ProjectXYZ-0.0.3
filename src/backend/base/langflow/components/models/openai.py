@@ -1,5 +1,6 @@
 from langchain_openai import ChatOpenAI
 from pydantic.v1 import SecretStr
+import os
 
 from langflow.base.models.model import LCModelComponent
 from langflow.base.models.openai_constants import OPENAI_MODEL_NAMES
@@ -7,6 +8,9 @@ from langflow.field_typing import LanguageModel
 from langflow.field_typing.range_spec import RangeSpec
 from langflow.inputs import BoolInput, DictInput, DropdownInput, IntInput, SecretStrInput, SliderInput, StrInput
 
+from dotenv import load_dotenv
+
+load_dotenv()
 
 class OpenAIModelComponent(LCModelComponent):
     display_name = "OpenAI"
@@ -56,7 +60,7 @@ class OpenAIModelComponent(LCModelComponent):
             info="The OpenAI API Key to use for the OpenAI model.",
             advanced=False,
             value="OPENAI_API_KEY",
-            required=True,
+            required=False,
         ),
         SliderInput(
             name="temperature", display_name="Temperature", value=0.1, range_spec=RangeSpec(min=0, max=1, step=0.01)
@@ -96,7 +100,9 @@ class OpenAIModelComponent(LCModelComponent):
         max_retries = self.max_retries
         timeout = self.timeout
 
-        api_key = SecretStr(openai_api_key).get_secret_value() if openai_api_key else None
+        # Correct way to access environment variables in Python
+        api_key = os.getenv("OPENAI_API_KEY")
+        self.api_key = api_key
         output = ChatOpenAI(
             max_tokens=max_tokens or None,
             model_kwargs=model_kwargs,

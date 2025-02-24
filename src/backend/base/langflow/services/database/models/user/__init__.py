@@ -5,4 +5,7 @@ __all__ = [
     "UserCreate",
     "UserRead",
     "UserUpdate",
+    "create_integration_token",
+    "get_integration_tokens",
+    "delete_integration_token",
 ]

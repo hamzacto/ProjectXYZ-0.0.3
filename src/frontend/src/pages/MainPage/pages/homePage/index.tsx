@@ -15,6 +15,7 @@ import ListSkeleton from "../../components/listSkeleton";
 import useFileDrop from "../../hooks/use-on-file-drop";
 import ModalsComponent from "../../oldComponents/modalsComponent";
 import EmptyFolder from "../emptyFolder";
+import GuidedAIAgentModalsComponent from "../../oldComponents/guidedAIAgentModalsComponent/indes";
 
 const HomePage = ({ type }) => {
   const [view, setView] = useState<"grid" | "list">(() => {
@@ -22,6 +23,7 @@ const HomePage = ({ type }) => {
     return savedView === "grid" || savedView === "list" ? savedView : "list";
   });
   const [newProjectModal, setNewProjectModal] = useState(false);
+  const [newGuidedAgent, setNewGuidedAgent] = useState(false);
   const { folderId } = useParams();
   const [pageIndex, setPageIndex] = useState(1);
   const [pageSize, setPageSize] = useState(12);
@@ -101,6 +103,7 @@ const HomePage = ({ type }) => {
                 setNewProjectModal={setNewProjectModal}
                 setSearch={onSearch}
                 isEmptyFolder={isEmptyFolder}
+                setNewGuidedAgent={setNewGuidedAgent}
               />
               {isEmptyFolder ? (
                 <EmptyFolder setOpenModal={setNewProjectModal} />
@@ -181,6 +184,14 @@ const HomePage = ({ type }) => {
       <ModalsComponent
         openModal={newProjectModal}
         setOpenModal={setNewProjectModal}
+        openDeleteFolderModal={false}
+        setOpenDeleteFolderModal={() => {}}
+        handleDeleteFolder={() => {}}
+      />
+      {/* New Guided AI Agent Form */}
+      <GuidedAIAgentModalsComponent
+        openModal={newGuidedAgent}
+        setOpenModal={setNewGuidedAgent}
         openDeleteFolderModal={false}
         setOpenDeleteFolderModal={() => {}}
         handleDeleteFolder={() => {}}

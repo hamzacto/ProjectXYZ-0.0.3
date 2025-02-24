@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from langflow.services.database.models.flow import Flow
     from langflow.services.database.models.folder import Folder
     from langflow.services.database.models.variable import Variable
-
+    from langflow.services.database.models.integration_token.model import IntegrationToken
 
 class User(SQLModel, table=True):  # type: ignore[call-arg]
     id: UUIDstr = Field(default_factory=uuid4, primary_key=True, unique=True)
@@ -36,6 +36,11 @@ class User(SQLModel, table=True):  # type: ignore[call-arg]
     folders: list["Folder"] = Relationship(
         back_populates="user",
         sa_relationship_kwargs={"cascade": "delete"},
+    )
+
+    integrations: list["IntegrationToken"] = Relationship(
+        back_populates="user",
+        sa_relationship_kwargs={"cascade": "delete"}
     )
 
 

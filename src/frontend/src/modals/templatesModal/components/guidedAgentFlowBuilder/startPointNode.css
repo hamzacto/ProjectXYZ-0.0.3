@@ -1,0 +1,249 @@
+/* NodeStyles.module.css */
+/* .nodeWrapper {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    position: relative;
+  } */
+
+  .nodeContainer {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    background-color: #f9f9f9;
+    border: 2px solid #d1d5db;
+    border-radius: 8px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    padding: 16px;
+    width: 300px;
+  }
+  
+  .conditionNodeContainer {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    background-color: rgb(27 27 35);
+    border: 2px solid #d1d5db;
+    border-radius: 8px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    padding: 16px;
+    width: 300px;
+  }
+  
+  .contentContainer {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    width: 100%;
+  }
+  
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    /* Align to the top-left */
+    font-size: 16px;
+    font-weight: 600;
+    color: #1f2937;
+    gap: 8px;
+  }
+  
+  .conditionNodeHeader{
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    /* Align to the top-left */
+    font-size: 16px;
+    font-weight: 600;
+    color: #f9f9f9;
+    gap: 8px;
+  }
+  
+  .icon {
+    font-size: 18px;
+    color: #2563eb;
+  }
+  
+  .conditionNodeIcon{
+    font-size: 18px;
+    color: #f9f9f9;
+  }
+  
+  .inputContainer {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 100%;
+  }
+  
+  .textarea {
+    width: 100%;
+    height: 120px;
+    /* Increased height for a larger input area */
+    padding: 8px;
+    border: 1px solid #d1d5db;
+    border-radius: 4px;
+    font-size: 14px;
+    outline: none;
+    /* resize: none; Prevents resizing for consistent layout */
+    transition: border-color 0.2s;
+  }
+  
+  .conditionNodeTextarea{
+    width: 100%;
+    height: 120px;
+    /* Increased height for a larger input area */
+    padding: 8px;
+    border: 1px solid #d1d5db;
+    border-radius: 4px;
+    font-size: 14px;
+    outline: none;
+    /* resize: none; Prevents resizing for consistent layout */
+    transition: border-color 0.2s;
+    color: #f9f9f9;
+    background-color: #1f2937;
+  }
+  
+  .textarea:focus {
+    border-color: #2563eb;
+  }
+  .conditionNodeTextarea:focus {
+    border-color: #2563eb;
+  }
+  
+  /* .addButton {
+      background-color: #2563eb;
+      color: white;
+      font-size: 18px;
+      font-weight: bold;
+      border: none;
+      border-radius: 50%;
+      width: 36px;
+      height: 36px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      margin-top: 12px; 
+      transition: background-color 0.2s, transform 0.2s;
+      margin-top: 6px;
+      margin-bottom: 8px;
+    }
+    
+    .addButton:hover {
+      background-color: #1e40af;
+      transform: scale(1.1);
+    }
+    
+    .addButton:active {
+      transform: scale(0.95);
+    }
+  
+    .handleButtom{
+      margin-top: 5px;
+    } */
+  
+  
+  
+  .nodeWrapper {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    position: relative;
+  }
+  
+  .addButton {
+    background-color: #2563eb;
+    color: white;
+    font-size: 18px;
+    font-weight: bold;
+    border: none;
+    border-radius: 50%;
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    margin-top: 6px;
+    margin-bottom: 8px;
+    transition: background-color 0.2s, transform 0.2s;
+    opacity: 0;
+    /* Initially hidden */
+    pointer-events: none;
+    /* Disable interaction when hidden */
+  }
+  
+  .nodeWrapper:hover .addButton {
+    opacity: 1;
+    /* Show button on hover */
+    pointer-events: auto;
+    /* Enable interaction */
+  }
+  
+  .addButton:hover {
+    background-color: #1e40af;
+    transform: scale(1.1);
+  }
+  
+  .addButton:active {
+    transform: scale(0.95);
+  }
+  
+  
+  .deleteButton {
+    /* font-size: 18px;
+    font-weight: bold;
+    border: none;
+    border-radius: 50%;
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    margin-top: 6px;
+    margin-bottom: 8px;
+    transition: background-color 0.2s, transform 0.2s;
+    opacity: 0; */
+    /* Initially hidden */
+    /* pointer-events: none; */
+    /* Disable interaction when hidden */
+    position: absolute;
+    top: 10px;
+    right: 12px;
+    color: white;
+    border: none;
+    border-radius: 50%;
+    cursor: pointer;
+    width: 25px;
+    height: 25px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background-color 0.2s, transform 0.2s;
+  }
+  
+  .nodeWrapper:hover .deleteButton {
+    opacity: 1;
+    /* Show button on hover */
+    pointer-events: auto;
+    /* Enable interaction */
+  }
+  
+  .deleteButton:hover {
+    /* background-color: #1e40af; */
+    transform: scale(1.1);
+    background: #d2d1d1;
+  }
+  
+  .deleteButton:active {
+    transform: scale(0.95);
+  }
+  
+  
+  .deleteIcon{
+    font-size: 15px;
+    color: #79797a;
+    margin:2px;
+  }

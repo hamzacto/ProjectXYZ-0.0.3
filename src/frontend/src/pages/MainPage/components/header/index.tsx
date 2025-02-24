@@ -12,6 +12,7 @@ interface HeaderComponentProps {
   view: "list" | "grid";
   setView: (view: "list" | "grid") => void;
   setNewProjectModal: (newProjectModal: boolean) => void;
+  setNewGuidedAgent : (newGuidedAgent: boolean) => void;
   folderName?: string;
   setSearch: (search: string) => void;
   isEmptyFolder: boolean;
@@ -24,8 +25,10 @@ const HeaderComponent = ({
   view,
   setView,
   setNewProjectModal,
+  setNewGuidedAgent,
   setSearch,
   isEmptyFolder,
+  
 }: HeaderComponentProps) => {
   const [debouncedSearch, setDebouncedSearch] = useState("");
 
@@ -149,7 +152,26 @@ const HeaderComponent = ({
                   className="h-4 w-4"
                 />
                 <span className="hidden whitespace-nowrap font-semibold md:inline">
-                  New Flow
+                  New Flow2
+                </span>
+              </Button>
+            </ShadTooltip>
+            {/* NEW GUIDED AGENT FORM */}
+            <ShadTooltip content="New Flow" side="bottom">
+              <Button
+                variant="default"
+                className="!px-3 md:!px-4 md:!pl-3.5"
+                onClick={() => setNewGuidedAgent(true)}
+                id="new-project-btn"
+                data-testid="new-project-btn"
+              >
+                <ForwardedIconComponent
+                  name="Plus"
+                  aria-hidden="true"
+                  className="h-4 w-4"
+                />
+                <span className="hidden whitespace-nowrap font-semibold md:inline">
+                  New Agent
                 </span>
               </Button>
             </ShadTooltip>

@@ -1,0 +1,45 @@
+.instruction-node {
+    padding: 10px;
+    background: #f0f4ff;
+    border-radius: 8px;
+    border: 1px solid #ccc;
+  }
+  
+  .node-content {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  
+  .add-node-button {
+    background-color: #007bff;
+    border: none;
+    color: white;
+    border-radius: 4px;
+    cursor: pointer;
+    padding: 0 8px;
+  }
+  
+  .add-node-button:hover {
+    background-color: #0056b3;
+  }
+  
+.react-flow__node-custom {
+    padding: 10px;
+    background-color: #556677;
+    color: white;
+  }
+
+  .react-flow__attribution{
+    display: none;
+  }
+
+  .react-flow-wrapper {
+    width: 100%;
+    height: 100%;
+    position: relative;
+    touch-action: none; /* Important for smooth touch and mouse actions */
+  }
+  
+
+

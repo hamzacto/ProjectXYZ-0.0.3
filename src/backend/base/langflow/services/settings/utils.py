@@ -1,31 +1,54 @@
 import platform
 from pathlib import Path
+import os
 
 from loguru import logger
 
 
 def set_secure_permissions(file_path: Path) -> None:
-    if platform.system() in {"Linux", "Darwin"}:  # Unix/Linux/Mac
-        file_path.chmod(0o600)
-    elif platform.system() == "Windows":
-        import win32api
-        import win32con
-        import win32security
-
-        user, _, _ = win32security.LookupAccountName("", win32api.GetUserName())
-        sd = win32security.GetFileSecurity(str(file_path), win32security.DACL_SECURITY_INFORMATION)
-        dacl = win32security.ACL()
-
-        # Set the new DACL for the file: read and write access for the owner, no access for everyone else
-        dacl.AddAccessAllowedAce(
-            win32security.ACL_REVISION,
-            win32con.GENERIC_READ | win32con.GENERIC_WRITE,
-            user,
-        )
-        sd.SetSecurityDescriptorDacl(1, dacl, 0)
-        win32security.SetFileSecurity(str(file_path), win32security.DACL_SECURITY_INFORMATION, sd)
-    else:
-        logger.error("Unsupported OS")
+    try:
+        if os.name == 'nt':  # Windows
+            import win32security
+            import ntsecuritycon as con
+            
+            # Get the SID for the current user
+            username = os.getlogin()
+            user, domain, type = win32security.LookupAccountName(None, username)
+            
+            # Create a new security descriptor
+            sd = win32security.SECURITY_DESCRIPTOR()
+            
+            # Create a new DACL
+            dacl = win32security.ACL()
+            
+            # Add ACE for the current user (Full Control)
+            dacl.AddAccessAllowedAce(
+                win32security.ACL_REVISION,
+                con.FILE_ALL_ACCESS,
+                user
+            )
+            
+            # Set the DACL to the security descriptor
+            sd.SetSecurityDescriptorDacl(1, dacl, 0)
+            
+            try:
+                # Try to set the file security
+                win32security.SetFileSecurity(
+                    str(file_path),
+                    win32security.DACL_SECURITY_INFORMATION,
+                    sd
+                )
+            except Exception as e:
+                logger.warning(f"Could not set file security: {e}")
+                # Continue even if we can't set permissions
+                pass
+        else:
+            # Unix-like systems
+            file_path.chmod(0o600)
+    except Exception as e:
+        logger.warning(f"Could not set secure permissions: {e}")
+        # Continue even if we can't set permissions
+        pass
 
 
 def write_secret_to_file(path: Path, value: str) -> None:

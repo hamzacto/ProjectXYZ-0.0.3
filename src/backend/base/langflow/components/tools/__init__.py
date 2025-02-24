@@ -69,4 +69,6 @@ __all__ = [
     "WolframAlphaAPIComponent",
     "YfinanceComponent",
     "YfinanceToolComponent",
+    "GmailToolComponent",
+    "GmailSendEmailComponent"
 ]

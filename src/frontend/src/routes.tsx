@@ -36,12 +36,15 @@ import ShortcutsPage from "./pages/SettingsPage/pages/ShortcutsPage";
 import StoreApiKeyPage from "./pages/SettingsPage/pages/StoreApiKeyPage";
 import StorePage from "./pages/StorePage";
 import ViewPage from "./pages/ViewPage";
+import GuidedAgentIntegrations from "./modals/templatesModal/components/GuidedAgentIntegrations";
+import GuidedAgentIntegrationsPage from "./pages/GuidedAgentIntegrationsPage";
+import GmailIntegrationsDetailPage from "./pages/GmailIntegrationsDetailPage/index";
 
 const AdminPage = lazy(() => import("./pages/AdminPage"));
 const LoginAdminPage = lazy(() => import("./pages/AdminPage/LoginPage"));
 const DeleteAccountPage = lazy(() => import("./pages/DeleteAccountPage"));
 
-// const PlaygroundPage = lazy(() => import("./pages/Playground"));
+const PlaygroundPage = lazy(() => import("./pages/Playground"));
 
 const SignUp = lazy(() => import("./pages/SignUpPage"));
 const router = createBrowserRouter(
@@ -177,6 +180,16 @@ const router = createBrowserRouter(
                   }
                 />
                 <Route
+                  path="integrations"
+                  element={
+                    <GuidedAgentIntegrationsPage/>
+                  }
+                />
+                <Route
+                  path="integrations/gmail"
+                  element={<GmailIntegrationsDetailPage />}
+                />
+                <Route
                   path="store/:id/"
                   element={
                     <StoreGuard>
@@ -203,9 +216,9 @@ const router = createBrowserRouter(
                 </Route>
                 <Route path="view" element={<ViewPage />} />
               </Route>
-              {/* <Route path="playground/:id/">
+              <Route path="playground/:id/">
                 <Route path="" element={<PlaygroundPage />} />
-              </Route> */}
+              </Route>
             </Route>
           </Route>
           <Route

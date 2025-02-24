@@ -6,6 +6,7 @@ from alembic import context
 from sqlalchemy import pool, text
 from sqlalchemy.event import listen
 from sqlalchemy.ext.asyncio import async_engine_from_config
+from sqlalchemy import engine_from_config
 
 from langflow.services.database.service import SQLModel
 
@@ -105,7 +106,26 @@ def run_migrations_online() -> None:
     and associate a connection with the context.
 
     """
-    asyncio.run(_run_async_migrations())
+    # Use regular SQLite instead of async
+    configuration = config.get_section(config.config_ini_section)
+    if configuration["sqlalchemy.url"].startswith("sqlite"):
+        configuration["sqlalchemy.url"] = configuration["sqlalchemy.url"].replace("sqlite+aiosqlite", "sqlite")
+    
+    connectable = engine_from_config(
+        configuration,
+        prefix="sqlalchemy.",
+        poolclass=pool.NullPool,
+    )
+
+    with connectable.connect() as connection:
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            render_as_batch=True
+        )
+
+        with context.begin_transaction():
+            context.run_migrations()
 
 
 if context.is_offline_mode():

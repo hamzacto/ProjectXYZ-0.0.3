@@ -15,6 +15,8 @@ from langflow.api.v1 import (
     users_router,
     validate_router,
     variables_router,
+    integrations_router,
+    vectorstore_router,
 )
 from langflow.api.v2 import files_router as files_router_v2
 
@@ -41,3 +43,6 @@ router.include_router(folders_router)
 router.include_router(starter_projects_router)
 
 router_v2.include_router(files_router_v2)
+
+router.include_router(integrations_router)
+router.include_router(vectorstore_router)

@@ -1521,7 +1521,7 @@
                 "name": "api_key",
                 "password": true,
                 "placeholder": "",
-                "required": true,
+                "required": false,
                 "show": true,
                 "title_case": false,
                 "type": "str",

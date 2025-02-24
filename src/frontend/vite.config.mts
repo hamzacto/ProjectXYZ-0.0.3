@@ -47,6 +47,19 @@ export default defineConfig(({ mode }) => {
       proxy: {
         ...proxyTargets,
       },
+      host: true,
+      cors: true,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+      },
+      hmr: {
+        host: "localhost",
+      },
+      allowedHosts: [
+        "0d21-159-31-1-1.ngrok-free.app",
+        "fa47-159-31-1-1.ngrok-free.app",
+        ".ngrok-free.app"  // This will allow any ngrok subdomain
+      ],
     },
   };
 });
