@@ -93,21 +93,21 @@ export default function GuidedAIAgentTemplatesModal({
         handleParseErrors: true
     });
 
-    const [templateVariables, setTemplateVariables] = useState<Array<{
-        id: string;
-        name: string;
-        type: "Text" | "Long Text" | "Number" | "JSON";
-        defaultValue: string;
-        required: boolean;
-    }>>([
-        {
-            id: crypto.randomUUID(),
-            name: "Company_name",
-            type: "Text",
-            defaultValue: "",
-            required: true
-        }
-    ]);
+    // const [templateVariables, setTemplateVariables] = useState<Array<{
+    //     id: string;
+    //     name: string;
+    //     type: "Text" | "Long Text" | "Number" | "JSON";
+    //     defaultValue: string;
+    //     required: boolean;
+    // }>>([
+    //     {
+    //         id: crypto.randomUUID(),
+    //         name: "Company_name",
+    //         type: "Text",
+    //         defaultValue: "",
+    //         required: true
+    //     }
+    // ]);
 
     const [addedSubagents, setAddedSubagents] = useState<any[]>([]);
 
@@ -1037,6 +1037,9 @@ export default function GuidedAIAgentTemplatesModal({
         }
     }
 
+    // Add this at the top level of your component, with other hooks
+    const flows = useFlowsManagerStore((state) => state.flows);
+
     const handleCreate = () => {
         const token = document.cookie
             .split('; ')
@@ -1048,7 +1051,7 @@ export default function GuidedAIAgentTemplatesModal({
         }
 
         console.log("AI Agent Created", { name, description, prompt });
-        console.log("Template Variables:", templateVariables);
+        // console.log("Template Variables:", templateVariables);
 
         const collectionName = "agent_KB_" + Math.random().toString(36).substr(2, 9);
         let agentInstuctions = "";
@@ -1056,12 +1059,12 @@ export default function GuidedAIAgentTemplatesModal({
 
         // Add template variables information to agent instructions
         let templateVarsText = "";
-        if (templateVariables.length > 0) {
-            templateVarsText = "\n\nTEMPLATE VARIABLES:\n";
-            templateVariables.forEach(variable => {
-                templateVarsText += `- {{ ${variable.name} }}: ${variable.type}${variable.required ? ' (Required)' : ''}${variable.defaultValue ? ` - Default: ${variable.defaultValue}` : ''}\n`;
-            });
-        }
+        // if (templateVariables.length > 0) {
+        //     templateVarsText = "\n\nTEMPLATE VARIABLES:\n";
+        //     templateVariables.forEach(variable => {
+        //         templateVarsText += `- {{ ${variable.name} }}: ${variable.type}${variable.required ? ' (Required)' : ''}${variable.defaultValue ? ` - Default: ${variable.defaultValue}` : ''}\n`;
+        //     });
+        // }
 
         if (nodes.length > 1) {
             agentInstuctions = prompt + transformFlowToPrompt(nodes, edges) + templateVarsText + BASIC_INSTRUCTIONS;
@@ -1133,13 +1136,272 @@ export default function GuidedAIAgentTemplatesModal({
 
         const agentNode = flow?.data?.nodes?.find(node => node.data?.type === "ToolCallingAgent");
 
-        var updatedFlow = {
-            ...flow,
-            id: flow.id,
+        const userFlowNames = flows?.map((flow) => flow.name) || [];
+        // Create nodes for the subagents
+        const subagentNodes = addedSubagents.map((subagent, index) => {
+            // Generate a unique ID for the subagent node
+            const subagentNodeId = `RunFlow-${Math.random().toString(36).substring(2, 7)}`;
+            
+            // Calculate position
+            const posX = 1043.0266059303253;
+            const posY = -270.7925864199767 + (index * 100);
+            
+            
+            return {
+                "id": subagentNodeId,
+                "type": "genericNode",
+                "position": {
+                  "x": posX,
+                  "y": posY
+                },
+                "data": {
+                  "node": {
+                    "template": {
+                      "_type": "Component",
+                      "code": {
+                        "type": "code",
+                        "required": true,
+                        "placeholder": "",
+                        "list": false,
+                        "show": true,
+                        "multiline": true,
+                        "value": "from typing import Any\n\nfrom loguru import logger\n\nfrom langflow.base.tools.run_flow import RunFlowBaseComponent\nfrom langflow.helpers.flow import run_flow\nfrom langflow.schema import dotdict\n\n\nclass RunFlowComponent(RunFlowBaseComponent):\n    display_name = \"Run Flow\"\n    description = (\n        \"Creates a tool component from a Flow that takes all its inputs and runs it. \"\n        \" \\n **Select a Flow to use the tool mode**\"\n    )\n    beta = True\n    name = \"RunFlow\"\n    icon = \"Workflow\"\n\n    inputs = RunFlowBaseComponent._base_inputs\n    outputs = RunFlowBaseComponent._base_outputs\n\n    async def update_build_config(self, build_config: dotdict, field_value: Any, field_name: str | None = None):\n        if field_name == \"flow_name_selected\":\n            build_config[\"flow_name_selected\"][\"options\"] = await self.get_flow_names()\n            missing_keys = [key for key in self.default_keys if key not in build_config]\n            if missing_keys:\n                msg = f\"Missing required keys in build_config: {missing_keys}\"\n                raise ValueError(msg)\n            if field_value is not None:\n                try:\n                    graph = await self.get_graph(field_value)\n                    build_config = self.update_build_config_from_graph(build_config, graph)\n                except Exception as e:\n                    msg = f\"Error building graph for flow {field_value}\"\n                    logger.exception(msg)\n                    raise RuntimeError(msg) from e\n        return build_config\n\n    async def run_flow_with_tweaks(self):\n        tweaks: dict = {}\n\n        flow_name_selected = self._attributes.get(\"flow_name_selected\")\n        parsed_flow_tweak_data = self._attributes.get(\"flow_tweak_data\", {})\n        if not isinstance(parsed_flow_tweak_data, dict):\n            parsed_flow_tweak_data = parsed_flow_tweak_data.dict()\n\n        if parsed_flow_tweak_data != {}:\n            for field in parsed_flow_tweak_data:\n                if \"~\" in field:\n                    [node, name] = field.split(\"~\")\n                    if node not in tweaks:\n                        tweaks[node] = {}\n                    tweaks[node][name] = parsed_flow_tweak_data[field]\n        else:\n            for field in self._attributes:\n                if field not in self.default_keys and \"~\" in field:\n                    [node, name] = field.split(\"~\")\n                    if node not in tweaks:\n                        tweaks[node] = {}\n                    tweaks[node][name] = self._attributes[field]\n\n        return await run_flow(\n            inputs=None,\n            output_type=\"all\",\n            flow_id=None,\n            flow_name=flow_name_selected,\n            tweaks=tweaks,\n            user_id=str(self.user_id),\n            session_id=self.graph.session_id or self.session_id,\n        )\n",
+                        "fileTypes": [],
+                        "file_path": "",
+                        "password": false,
+                        "name": "code",
+                        "advanced": true,
+                        "dynamic": true,
+                        "info": "",
+                        "load_from_db": false,
+                        "title_case": false
+                      },
+                      "flow_name_selected": {
+                        "tool_mode": false,
+                        "trace_as_metadata": true,
+                        "options": userFlowNames, // Use dynamic flow names here
+                        "options_metadata": [],
+                        "combobox": false,
+                        "dialog_inputs": {},
+                        "required": false,
+                        "placeholder": "",
+                        "show": true,
+                        "name": "flow_name_selected",
+                        "display_name": "Flow Name",
+                        "advanced": false,
+                        "dynamic": false,
+                        "info": "The name of the flow to run.",
+                        "real_time_refresh": true,
+                        "refresh_button": true,
+                        "title_case": false,
+                        "type": "str",
+                        "_input_type": "DropdownInput",
+                        "value": subagent.name
+                      },
+                      // Other template properties remain the same
+                      "tools_metadata": {
+                        "tool_mode": false,
+                        "is_list": true,
+                        "list_add_label": "Add More",
+                        "table_schema": {
+                          "columns": [
+                            {
+                              "name": "name",
+                              "display_name": "Tool Name",
+                              "sortable": false,
+                              "filterable": false,
+                              "type": "text",
+                              "description": "Specify the name of the tool.",
+                              "disable_edit": false,
+                              "edit_mode": "inline",
+                              "hidden": false,
+                              "formatter": "text"
+                            },
+                            {
+                              "name": "description",
+                              "display_name": "Tool Description",
+                              "sortable": false,
+                              "filterable": false,
+                              "type": "text",
+                              "description": "Describe the purpose of the tool.",
+                              "disable_edit": false,
+                              "edit_mode": "popover",
+                              "hidden": false,
+                              "formatter": "text"
+                            },
+                            {
+                              "name": "tags",
+                              "display_name": "Tool Identifiers",
+                              "sortable": false,
+                              "filterable": false,
+                              "type": "text",
+                              "description": "The default identifiers for the tools and cannot be changed.",
+                              "disable_edit": true,
+                              "edit_mode": "inline",
+                              "hidden": true,
+                              "formatter": "text"
+                            }
+                          ]
+                        },
+                        "trigger_text": "",
+                        "trigger_icon": "Hammer",
+                        "table_icon": "Hammer",
+                        "table_options": {
+                          "block_add": true,
+                          "block_delete": true,
+                          "block_edit": true,
+                          "block_sort": true,
+                          "block_filter": true,
+                          "block_hide": true,
+                          "block_select": true,
+                          "hide_options": true,
+                          "field_parsers": {
+                            "name": [
+                              "snake_case",
+                              "no_blank"
+                            ],
+                            "commands": "commands"
+                          },
+                          "description": "Modify tool names and descriptions to help agents understand when to use each tool."
+                        },
+                        "trace_as_metadata": true,
+                        "required": false,
+                        "placeholder": "",
+                        "show": true,
+                        "name": "tools_metadata",
+                        "value": [
+                          {
+                            "name": `${subagent.name}_tool_RunFlow-data_output`,
+                            "description": `Tool designed to execute the flow '${subagent.name}'. Flow details: ${subagent.description || ""}. Output details: data_output() - Creates a tool component from a Flow that takes all its inputs and runs it.  \n **Select a Flow to use the tool mode**`,
+                            "tags": [
+                              `${subagent.name}_tool_RunFlow-data_output`
+                            ]
+                          },
+                          {
+                            "name": `${subagent.name}_tool_RunFlow-dataframe_output`,
+                            "description": `Tool designed to execute the flow '${subagent.name}'. Flow details: ${subagent.description || ""}. Output details: dataframe_output() - Creates a tool component from a Flow that takes all its inputs and runs it.  \n **Select a Flow to use the tool mode**`,
+                            "tags": [
+                              `${subagent.name}_tool_RunFlow-dataframe_output`
+                            ]
+                          },
+                          {
+                            "name": `${subagent.name}_tool_RunFlow-message_output`,
+                            "description": `Tool designed to execute the flow '${subagent.name}'. Flow details: ${subagent.description || ""}. Output details: message_output() - Creates a tool component from a Flow that takes all its inputs and runs it.  \n **Select a Flow to use the tool mode**`,
+                            "tags": [
+                              `${subagent.name}_tool_RunFlow-message_output`
+                            ]
+                          }
+                        ],
+                        "display_name": "Edit tools",
+                        "advanced": false,
+                        "dynamic": false,
+                        "info": "",
+                        "real_time_refresh": true,
+                        "title_case": false,
+                        "type": "table",
+                        "_input_type": "TableInput"
+                      }
+                    },
+                    "description": "Creates a tool component from a Flow that takes all its inputs and runs it.  \n **Select a Flow to use the tool mode**",
+                    "icon": "Workflow",
+                    "base_classes": [
+                      "Data",
+                      "DataFrame",
+                      "Message"
+                    ],
+                    "display_name": "Run Flow",
+                    "documentation": "",
+                    "minimized": false,
+                    "custom_fields": {},
+                    "output_types": [],
+                    "pinned": false,
+                    "conditional_paths": [],
+                    "frozen": false,
+                    "outputs": [
+                      {
+                        "types": [
+                          "Tool"
+                        ],
+                        "selected": "Tool",
+                        "name": "component_as_tool",
+                        "hidden": null,
+                        "display_name": "Toolset",
+                        "method": "to_toolkit",
+                        "value": "__UNDEFINED__",
+                        "cache": true,
+                        "required_inputs": null,
+                        "allows_loop": false,
+                        "tool_mode": true
+                      }
+                    ],
+                    "field_order": [
+                      "flow_name_selected",
+                      "session_id"
+                    ],
+                    "beta": true,
+                    "legacy": false,
+                    "edited": false,
+                    "metadata": {},
+                    "tool_mode": true,
+                    "category": "logic",
+                    "key": "RunFlow",
+                    "score": 8.569061098350962e-12,
+                    "lf_version": "1.1.5"
+                  },
+                  "showNode": true,
+                  "type": "RunFlow",
+                  "id": subagentNodeId
+                },
+                "selected": false,
+                "measured": {
+                  "width": 320,
+                  "height": 436
+                },
+                "dragging": false
+              };
+        });
+
+        // Create edges for the subagent nodes
+        const subagentEdges = subagentNodes.map(subagentNode => {
+            const agentNodeId = flow?.data?.nodes?.[6]?.id || '';
+            
+            // Create source and target handles
+            const sourceHandle = `{œdataTypeœ:œRunFlowœ,œidœ:œ${subagentNode.id}œ,œnameœ:œcomponent_as_toolœ,œoutput_typesœ:[œToolœ]}`;
+            const targetHandle = `{œfieldNameœ:œtoolsœ,œidœ:œ${agentNodeId}œ,œinputTypesœ:[œToolœ],œtypeœ:œotherœ}`;
+            
+            // Return the edge object
+            return {
+                "source": subagentNode.id,
+                "sourceHandle": sourceHandle,
+                "target": agentNodeId,
+                "targetHandle": targetHandle,
+                "data": {
+                  "targetHandle": {
+                    "fieldName": "tools",
+                    "id": agentNodeId,
+                    "inputTypes": ["Tool"],
+                    "type": "other"
+                  },
+                  "sourceHandle": {
+                    "dataType": "RunFlow",
+                    "id": subagentNode.id,
+                    "name": "component_as_tool",
+                    "output_types": ["Tool"]
+                  }
+                },
+                "id": `xy-edge__${subagentNode.id}${sourceHandle}-${agentNodeId}${targetHandle}`,
+                "animated": false,
+                "className": ""
+            };
+        });
+
+        // Now update the flow data to include subagent nodes and edges
+        const updatedFlow = {
+            id: "",
             name: name,
             description: description,
             data: {
-                ...flow.data,
+                // Include nodes for the base flow plus tools and subagents
                 nodes: [
                     ...flow.data.nodes.map((node): AllNodeType => {
                         if (node.data.id.includes("Prompt")) {
@@ -1276,6 +1538,7 @@ export default function GuidedAIAgentTemplatesModal({
                         return node as AllNodeType;
                     }),
                     ...toolNodes, // Add the tool nodes to the flow
+                    ...subagentNodes, // Add the subagent nodes to the flow
                 ],
                 edges: [
                     ...flow.data.edges,
@@ -1332,10 +1595,12 @@ export default function GuidedAIAgentTemplatesModal({
                             selected: false,
                         };
                     }),
+                    // Add edges to connect the subagents to the AI agent node
+                    ...subagentEdges,
                 ],
+                viewport: defaultViewport, // Add this line to fix the error
             },
         };
-        // Update the flow with the new tool nodes
 
         if (fileCategories[0].files.length > 0) {
             try {
@@ -1545,11 +1810,6 @@ export default function GuidedAIAgentTemplatesModal({
                                 <GuidedAgentAIAgentAdvancedSettings
                                     settings={advancedSettings}
                                     onSettingsChange={setAdvancedSettings}
-                                />
-                            ) : currentTab === "configure-template" ? (
-                                <GuidedAiAgentConfigureTemplate
-                                    variables={templateVariables}
-                                    onVariablesChange={setTemplateVariables}
                                 />
                             ) : currentTab === "subagents" ? (
                                 <GuidedAgentSubagents

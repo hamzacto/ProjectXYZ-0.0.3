@@ -42,7 +42,7 @@ export const AddedSubagentsList = ({
           </div>
         </div>
         
-        <div className="flex-1 overflow-visible p-2">
+        <div className="flex-1 overflow-y-auto overflow-x-hidden custom-scroll p-2">
           {subagents.length === 0 && !addingSubagent ? (
             <div className="flex h-full flex-col items-center justify-center gap-2 p-4 text-center">
               <ForwardedIconComponent
@@ -87,8 +87,8 @@ export const AddedSubagentsList = ({
                 </div>
               )}
               
-              {/* Existing subagents */}
-              {subagents.map((subagent) => (
+              {/* Existing subagents - reversed to show newest first */}
+              {[...subagents].reverse().map((subagent) => (
                 <div 
                   key={subagent.id}
                   className={cn(

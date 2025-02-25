@@ -31,7 +31,7 @@ from .wikipedia_api import WikipediaAPIComponent
 from .wolfram_alpha_api import WolframAlphaAPIComponent
 from .yahoo import YfinanceComponent
 from .yahoo_finance import YfinanceToolComponent
-
+from .alphavantage import AlphaVantageComponent
 with warnings.catch_warnings():
     warnings.simplefilter("ignore", LangChainDeprecationWarning)
     from .astradb import AstraDBToolComponent
@@ -70,5 +70,6 @@ __all__ = [
     "YfinanceComponent",
     "YfinanceToolComponent",
     "GmailToolComponent",
-    "GmailSendEmailComponent"
+    "GmailSendEmailComponent",
+    "AlphaVantageComponent"
 ]
