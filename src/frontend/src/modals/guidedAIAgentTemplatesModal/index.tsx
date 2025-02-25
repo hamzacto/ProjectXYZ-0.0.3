@@ -51,6 +51,8 @@ import { useIntegrationStore } from "@/stores/integrationStore";
 import GuidedAgentAIAgentAdvancedSettings from "../templatesModal/components/GuidedAgentAIAgentAdvancedSettings";
 import { GuidedAgentNavComponent } from "../templatesModal/components/GuidedAgentNavComponent";
 import GuidedAgentModal from "../guidedAgentModal";
+import GuidedAiAgentConfigureTemplate from "../templatesModal/components/GuidedAiAgentConfigureTemplate";
+import GuidedAgentSubagents from "../templatesModal/components/GuidedAgentSubagents";
 
 
 export default function GuidedAIAgentTemplatesModal({
@@ -90,6 +92,34 @@ export default function GuidedAIAgentTemplatesModal({
         maxTokens: 1000,
         handleParseErrors: true
     });
+
+    const [templateVariables, setTemplateVariables] = useState<Array<{
+        id: string;
+        name: string;
+        type: "Text" | "Long Text" | "Number" | "JSON";
+        defaultValue: string;
+        required: boolean;
+    }>>([
+        {
+            id: crypto.randomUUID(),
+            name: "Company_name",
+            type: "Text",
+            defaultValue: "",
+            required: true
+        }
+    ]);
+
+    const [addedSubagents, setAddedSubagents] = useState<any[]>([]);
+
+    const handleAddSubagent = (subagent: any) => {
+        if (!addedSubagents.some(s => s.id === subagent.id)) {
+            setAddedSubagents((prev) => [...prev, subagent]);
+        }
+    };
+
+    const handleDeleteSubagent = (subagent: any) => {
+        setAddedSubagents((prev) => prev.filter((s) => s.id !== subagent.id));
+    };
 
     const handleTriggersChange = (triggers: string[]) => {
         setSelectedTriggers(triggers);
@@ -175,7 +205,7 @@ export default function GuidedAIAgentTemplatesModal({
         }
     };
 
-        // Callback to delete a tool:
+    // Callback to delete a tool:
     const handleDeleteTool = (tool: any) => {
         setAddedTools((prevTools) => prevTools.filter((t) => t !== tool));
     };
@@ -879,7 +909,7 @@ export default function GuidedAIAgentTemplatesModal({
     async function processInBatches<T>(items: T[], handler: (item: T) => Promise<void>, concurrency: number = 4) {
         const executing: Promise<void>[] = [];
         const settled = new Map<Promise<void>, boolean>();
-        
+
         for (const item of items) {
             const p = handler(item).then(() => {
                 settled.set(p, true);
@@ -1018,16 +1048,27 @@ export default function GuidedAIAgentTemplatesModal({
         }
 
         console.log("AI Agent Created", { name, description, prompt });
+        console.log("Template Variables:", templateVariables);
+
         const collectionName = "agent_KB_" + Math.random().toString(36).substr(2, 9);
         let agentInstuctions = "";
         const BASIC_INSTRUCTIONS = "\n\nRULES:\n1. Never query the Vector Store with an empty string.\n2. If you don't know the answer, just say so. Don't make up an answer.\n3. If you are unsure about the answer, just say so. Don't make up an answer.";
 
-        if(nodes.length > 1) {
-            agentInstuctions = prompt + transformFlowToPrompt(nodes, edges) + BASIC_INSTRUCTIONS;
-        }else if(prompt){
-            agentInstuctions = prompt + BASIC_INSTRUCTIONS;
-        }else{
-            agentInstuctions = "You are a helpful assistant that can answer questions and help with tasks." + BASIC_INSTRUCTIONS;
+        // Add template variables information to agent instructions
+        let templateVarsText = "";
+        if (templateVariables.length > 0) {
+            templateVarsText = "\n\nTEMPLATE VARIABLES:\n";
+            templateVariables.forEach(variable => {
+                templateVarsText += `- {{ ${variable.name} }}: ${variable.type}${variable.required ? ' (Required)' : ''}${variable.defaultValue ? ` - Default: ${variable.defaultValue}` : ''}\n`;
+            });
+        }
+
+        if (nodes.length > 1) {
+            agentInstuctions = prompt + transformFlowToPrompt(nodes, edges) + templateVarsText + BASIC_INSTRUCTIONS;
+        } else if (prompt) {
+            agentInstuctions = prompt + templateVarsText + BASIC_INSTRUCTIONS;
+        } else {
+            agentInstuctions = "You are a helpful assistant that can answer questions and help with tasks." + templateVarsText + BASIC_INSTRUCTIONS;
         }
         // Find the new flow template (replace "new_flow_template_name" with the actual name or ID of the new template)
         // if(fileCategories[0].files.length === 0) {
@@ -1119,7 +1160,7 @@ export default function GuidedAIAgentTemplatesModal({
                                 },
                             } as AllNodeType;
                         }
-                        if (node.data.type === "OpenAIModel") {   
+                        if (node.data.type === "OpenAIModel") {
                             return {
                                 ...node,
                                 data: {
@@ -1144,19 +1185,19 @@ export default function GuidedAIAgentTemplatesModal({
                                                 ...node.data.node.template.max_tokens,
                                                 value: advancedSettings.maxTokens,
                                             },
-                                            timeout: {  
+                                            timeout: {
                                                 ...node.data.node.template.timeout,
                                                 value: advancedSettings.timeout,
                                             },
                                             seed: {
                                                 ...node.data.node.template.seed,
-                                                value: advancedSettings.seed,   
+                                                value: advancedSettings.seed,
                                             }
                                         }
                                     }
                                 }
                             } as AllNodeType;
-                        } 
+                        }
 
                         if (node.data.id.includes("Milvus")) {
                             return {
@@ -1177,7 +1218,7 @@ export default function GuidedAIAgentTemplatesModal({
                             } as AllNodeType;
                         }
 
-                        if(node.data.id.includes("OpenAIEmbeddings")) {
+                        if (node.data.id.includes("OpenAIEmbeddings")) {
                             return {
                                 ...node,
                                 data: {
@@ -1196,7 +1237,7 @@ export default function GuidedAIAgentTemplatesModal({
                             } as AllNodeType;
                         }
 
-                        if(node.data.id.includes("OpenAIToolsAgent")) {
+                        if (node.data.id.includes("OpenAIToolsAgent")) {
                             return {
                                 ...node,
                                 data: {
@@ -1217,7 +1258,7 @@ export default function GuidedAIAgentTemplatesModal({
                                     }
                                 }
                             } as AllNodeType;
-                        }   
+                        }
 
                         const modifyNode = (field, value) => {
                             updatedNode.data.node.template[field] = {
@@ -1296,7 +1337,7 @@ export default function GuidedAIAgentTemplatesModal({
         };
         // Update the flow with the new tool nodes
 
-        if(fileCategories[0].files.length > 0) {    
+        if (fileCategories[0].files.length > 0) {
             try {
                 createCollectionInMilvus(collectionName);
                 insertFilesIntoDatabase(fileCategories, collectionName);
@@ -1357,7 +1398,7 @@ export default function GuidedAIAgentTemplatesModal({
                 // { title: "Integrations", icon: "sparkles", id: "integrations" },
                 { title: "knowledge", icon: "Database", id: "khowledge_base" },
                 { title: "Tools", icon: "hammer", id: "tools-link" },
-                { title: "Subagents", icon: "git-fork", id: "agents" },
+                { title: "Subagents", icon: "git-fork", id: "subagents" },
                 { title: "Triggers", icon: "clock", id: "triggers" },
             ],
         },
@@ -1366,7 +1407,7 @@ export default function GuidedAIAgentTemplatesModal({
             title: "More settings",
             items: [
                 { title: "Advanced options", icon: "settings", id: "advanced-settings" },
-                { title: "Configure template", icon: "layout-panel-top", id: "rag" },
+                // { title: "Configure template", icon: "layout-panel-top", id: "configure-template" },
                 // { title: "Task views", icon: "list-todo", id: "agentss" },
             ],
         }
@@ -1504,6 +1545,17 @@ export default function GuidedAIAgentTemplatesModal({
                                 <GuidedAgentAIAgentAdvancedSettings
                                     settings={advancedSettings}
                                     onSettingsChange={setAdvancedSettings}
+                                />
+                            ) : currentTab === "configure-template" ? (
+                                <GuidedAiAgentConfigureTemplate
+                                    variables={templateVariables}
+                                    onVariablesChange={setTemplateVariables}
+                                />
+                            ) : currentTab === "subagents" ? (
+                                <GuidedAgentSubagents
+                                    addedSubagents={addedSubagents}
+                                    addSubagent={handleAddSubagent}
+                                    deleteSubagent={handleDeleteSubagent}
                                 />
                             ) : (
                                 <TemplateContentComponent

@@ -1,0 +1,139 @@
+.tools-link-category-container {
+  display: flex;
+  gap: 1rem;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  animation: fadeIn 0.3s ease-out;
+}
+
+.tools-link-category {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.tool-item.added {
+  border-left: 2px solid;
+  background-color: rgba(var(--primary-rgb), 0.08);
+}
+
+.tool-item .add-button {
+  opacity: 0;
+}
+
+.tool-item:hover .add-button {
+  opacity: 1;
+}
+
+/* Animation for when an item is added or removed */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideIn {
+  from {
+    transform: translateX(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes pulse {
+  0% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.05);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes liftAndFade {
+  0% {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(-2px) scale(1.01);
+    opacity: 0.8;
+    box-shadow: 0 8px 15px -5px rgba(0, 0, 0, 0.05);
+  }
+}
+
+@keyframes slideToRight {
+  0% {
+    transform: translateX(0);
+    opacity: 0.8;
+  }
+  100% {
+    transform: translateX(calc(100% + 1rem));
+    opacity: 0;
+  }
+}
+
+@keyframes placeholderAppear {
+  0% {
+    opacity: 0;
+    transform: translateX(10px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.subagent-being-added {
+  animation: liftAndFade 0.25s cubic-bezier(0.2, 0, 0.1, 1) forwards, 
+             slideToRight 0.4s 0.25s cubic-bezier(0.1, 0, 0.2, 1) forwards;
+  position: relative;
+  z-index: 50;
+  transform-origin: center center;
+  will-change: transform, opacity;
+}
+
+.subagent-placeholder {
+  animation: placeholderAppear 0.35s 0.45s cubic-bezier(0.1, 0, 0.2, 1) forwards;
+  opacity: 0;
+  will-change: transform, opacity;
+}
+
+.subagent-item-enter {
+  animation: slideIn 0.35s 0.55s cubic-bezier(0.1, 0, 0.2, 1) forwards;
+  opacity: 0;
+  transform: translateX(10px);
+  will-change: transform, opacity;
+}
+
+.available-subagents-container {
+  animation: fadeIn 0.4s ease-out;
+}
+
+.added-subagents-container {
+  animation: fadeIn 0.5s ease-out;
+}
+
+.subagent-header {
+  transition: all 0.2s ease;
+}
+
+.subagent-header:hover {
+  background-color: rgba(var(--primary-rgb), 0.05);
+}
+
+.add-button-pulse {
+  animation: pulse 0.4s ease-in-out;
+} 
