@@ -83,13 +83,13 @@ export default function GuidedAIAgentTemplatesModal({
     const [selectedTriggers, setSelectedTriggers] = useState<string[]>([]);
 
     const [advancedSettings, setAdvancedSettings] = useState({
-        temperature: 0.7,
+        temperature: 0.3,
         modelName: "gpt-3.5-turbo",
-        maxRetries: 5,
+        maxRetries: 10,
         timeout: 700,
-        seed: 42,
+        seed: 1,
         jsonMode: false,
-        maxTokens: 1000,
+        maxTokens: 0,
         handleParseErrors: true
     });
 
@@ -1079,7 +1079,7 @@ export default function GuidedAIAgentTemplatesModal({
         // }else{
         //     flow = examples.find((example) => example.name === "TemplateGuidedRAGAgent");
         // }
-        flow = examples.find((example) => example.name === "TemplateGuidedAgent");
+        flow = examples.find((example) => example.name === "TemplateGuidedAgentWithRag");
         if (!flow?.id || !flow?.data?.nodes) {
             console.error("Flow data is incomplete");
             return;
@@ -1089,13 +1089,21 @@ export default function GuidedAIAgentTemplatesModal({
         const toolNodes = addedTools.map((tool, index) => {
             const toolId = getNodeId(tool.display_name); // Use the tool's display name as the type
 
-            if (tool.display_name === "Gmail Fetcher Tool" || tool.display_name == "Gmail Sender Tool" || tool.display_name == "Gmail Responder Tool") {
+            if (tool.display_name === "Gmail Fetcher Tool" || tool.display_name == "Gmail Sender Tool" || tool.display_name == "Gmail Responder Tool" || tool.display_name == "Gmail Draft Tool") {
                 tool.template.api_key.value = "m1m8sy261xzb4l4hjmwq";
                 tool.template.api_key.load_from_db = false;
             }
 
 
-            if (tool.display_name === "Gmail Email Loader" || tool.display_name === "Gmail Email Sender" || tool.display_name === "Gmail Email Responder") {
+            if (tool.display_name === "Gmail Email Loader" 
+                || tool.display_name === "Gmail Email Sender" 
+                || tool.display_name === "Gmail Email Responder" 
+                || tool.display_name === "Gmail Email Draft Creator"
+                || tool.display_name === "Google Calendar Event Creator"
+                || tool.display_name === "Google Calendar Event Loader"
+                || tool.display_name === "Google Calendar Event Modifier"
+                || tool.display_name === "Google Sheets Data Loader"
+                || tool.display_name === "Google Sheets Data Modifier") {
                 // Get the access token from cookies
                 const token = document.cookie
                     .split('; ')
@@ -1363,7 +1371,7 @@ export default function GuidedAIAgentTemplatesModal({
 
         // Create edges for the subagent nodes
         const subagentEdges = subagentNodes.map(subagentNode => {
-            const agentNodeId = flow?.data?.nodes?.[6]?.id || '';
+            const agentNodeId = flow?.data?.nodes?.[7]?.id || '';
             
             // Create source and target handles
             const sourceHandle = `{œdataTypeœ:œRunFlowœ,œidœ:œ${subagentNode.id}œ,œnameœ:œcomponent_as_toolœ,œoutput_typesœ:[œToolœ]}`;
@@ -1545,18 +1553,18 @@ export default function GuidedAIAgentTemplatesModal({
                     // Add edges to connect the tools to the AI agent node
                     ...toolNodes.map((toolNode) => {
                         const sourceHandle = `{œdataTypeœ:œ${toolNode.data.type}œ,œidœ:œ${toolNode.id}œ,œnameœ:œapi_build_toolœ,œoutput_typesœ:[œToolœ]}`;
-                        const targetHandle = `{œfieldNameœ:œtoolsœ,œidœ:œ${flow?.data?.nodes?.[6]?.id || ''}œ,œinputTypesœ:[œToolœ],œtypeœ:œotherœ}`;
+                        const targetHandle = `{œfieldNameœ:œtoolsœ,œidœ:œ${flow?.data?.nodes?.[7]?.id || ''}œ,œinputTypesœ:[œToolœ],œtypeœ:œotherœ}`;
 
                         console.log({
-                            id: `xy-edge__${toolNode.id}${sourceHandle}-${flow?.data?.nodes?.[6]?.id || ''}${targetHandle}`,
+                            id: `xy-edge__${toolNode.id}${sourceHandle}-${flow?.data?.nodes?.[7]?.id || ''}${targetHandle}`,
                             source: toolNode.id,
-                            target: flow?.data?.nodes?.[6]?.id || '',
+                            target: flow?.data?.nodes?.[7]?.id || '',
                             sourceHandle: sourceHandle,
                             targetHandle: targetHandle,
                             data: {
                                 targetHandle: {
                                     fieldName: "tools",
-                                    id: flow?.data?.nodes?.[6]?.id || '',
+                                    id: flow?.data?.nodes?.[7]?.id || '',
                                     inputTypes: ["Tool"],
                                     type: "other",
                                 },
@@ -1572,15 +1580,15 @@ export default function GuidedAIAgentTemplatesModal({
                         });
 
                         return {
-                            id: `xy-edge__${toolNode.id}${sourceHandle}-${flow?.data?.nodes?.[6]?.id || ''}${targetHandle}`,
+                            id: `xy-edge__${toolNode.id}${sourceHandle}-${flow?.data?.nodes?.[7]?.id || ''}${targetHandle}`,
                             source: toolNode.id,
-                            target: flow?.data?.nodes?.[6]?.id || '', // Use the found agent node instead of assuming position
+                            target: flow?.data?.nodes?.[7]?.id || '', // Use the found agent node instead of assuming position
                             sourceHandle: sourceHandle,
                             targetHandle: targetHandle,
                             data: {
                                 targetHandle: {
                                     fieldName: "tools",
-                                    id: flow?.data?.nodes?.[6]?.id || '',
+                                    id: flow?.data?.nodes?.[7]?.id || '',
                                     inputTypes: ["Tool"],
                                     type: "other",
                                 },

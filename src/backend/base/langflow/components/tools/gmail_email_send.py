@@ -3,6 +3,7 @@ import html
 import base64
 from uuid import UUID
 from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 from sqlmodel import create_engine, Session, select, SQLModel
 from google.oauth2.credentials import Credentials
@@ -11,7 +12,6 @@ from googleapiclient.discovery import build
 from loguru import logger
 from pydantic import BaseModel, Field
 from langchain.tools import StructuredTool
-from langchain_core.tools import ToolException
 from langflow.base.langchain_utilities.model import LCToolComponent
 from langflow.field_typing import Tool
 from langflow.inputs import StrInput, IntInput
@@ -21,29 +21,52 @@ from langflow.schema import Data
 from langflow.services.database.models.integration_token.model import IntegrationToken
 
 # Define the scopes required by the Gmail API for sending email.
-SCOPES = ['https://www.googleapis.com/auth/gmail.send']
+SCOPES = [
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.modify",
+    "https://www.googleapis.com/auth/gmail.send",
+    "https://www.googleapis.com/auth/gmail.compose",
+    "https://www.googleapis.com/auth/gmail.insert",
+]
 
-
-# Define the input schema.
+# Updated input schema without scheduler functionality.
 class GmailSendEmailSchema(BaseModel):
-    recipient: str = Field(..., description="The recipient's email address.")
+    recipient: str = Field(..., description="Comma-separated list of recipient email addresses.")
+    cc: str = Field("", description="Optional: Comma-separated CC email addresses.")
+    bcc: str = Field("", description="Optional: Comma-separated BCC email addresses.")
     subject: str = Field(..., description="Subject of the email.")
     body_text: str = Field(..., description="Body content of the email.")
+    labels: str = Field("", description="Optional: Comma-separated Gmail label IDs to add to the sent email.")
+    thread_id: str = Field("", description="Optional: Gmail thread ID to which this email should belong.")
     user_id: str = Field(..., description="The current user's ID.")
 
 
 class GmailEmailSenderComponent(LCToolComponent):
     display_name = "Gmail Email Sender"
-    description = "Send an email via the Gmail API using your authenticated account."
+    description = "Send an email via the Gmail API."
     icon = "Gmail"  # Update with your desired icon identifier.
     name = "GmailEmailSenderTool"
 
-    # Define the tool's input fields.
+    # Updated inputs list without scheduling.
     inputs = [
         StrInput(
             name="recipient",
-            display_name="Recipient Email",
-            info="The email address of the recipient.",
+            display_name="Recipient Email(s)",
+            info="Comma-separated list of recipient email addresses.",
+            value="",
+            required=False
+        ),
+        StrInput(
+            name="cc",
+            display_name="CC Email(s)",
+            info="Optional: Comma-separated CC email addresses.",
+            value="",
+            required=False
+        ),
+        StrInput(
+            name="bcc",
+            display_name="BCC Email(s)",
+            info="Optional: Comma-separated BCC email addresses.",
             value="",
             required=False
         ),
@@ -62,6 +85,20 @@ class GmailEmailSenderComponent(LCToolComponent):
             required=False
         ),
         StrInput(
+            name="labels",
+            display_name="Gmail Label IDs",
+            info="Optional: Comma-separated Gmail label IDs to add to the sent email.",
+            value="",
+            required=False
+        ),
+        StrInput(
+            name="thread_id",
+            display_name="Thread ID",
+            info="Optional: Gmail thread ID to which this email should belong.",
+            value="",
+            required=False
+        ),
+        StrInput(
             name="user_id",
             display_name="User ID",
             info="The current user's ID.",
@@ -73,7 +110,14 @@ class GmailEmailSenderComponent(LCToolComponent):
     def run_model(self) -> list[Data]:
         """Run the tool using the provided inputs."""
         return self._gmail_email_sender(
-            self.recipient, self.subject, self.body_text, self.user_id
+            self.recipient,
+            self.cc,
+            self.bcc,
+            self.subject,
+            self.body_text,
+            self.labels,
+            self.thread_id,
+            self.user_id
         )
 
     def build_tool(self) -> Tool:
@@ -82,22 +126,32 @@ class GmailEmailSenderComponent(LCToolComponent):
             name="gmail_email_sender",
             description=(
                 "Send an email using the Gmail API by directly querying the database for "
-                "the integration token. Requires recipient, subject, body text, and user_id."
+                "the integration token. Supports multiple recipients (To, CC, BCC) and optional Gmail labels and threading."
             ),
             func=self._gmail_email_sender,
             args_schema=GmailSendEmailSchema,
         )
 
-    def _gmail_email_sender(self, recipient: str, subject: str, body_text: str, user_id: str) -> list[Data]:
+    def _gmail_email_sender(
+        self,
+        recipient: str = "",
+        cc: str = "",
+        bcc: str = "",
+        subject: str = "",
+        body_text: str = "",
+        labels: str = "",
+        thread_id: str = "",
+        user_id: str = ""
+    ) -> list[Data]:
         # Validate and convert the provided user_id into a UUID.
         try:
             user_uuid = UUID(self.user_id)
         except Exception as e:
-            error_message = f"Invalid user_id provided: {e}"
+            error_message = f"Error: Invalid user_id provided: {e}"
             logger.error(error_message)
-            raise ToolException(error_message) from e
+            return [Data(text=error_message)]
 
-        # Create a direct database connection using the environment variable or a default.
+        # Create a direct database connection.
         engine = create_engine("sqlite:///src/backend/base/langflow/langflow.db")
         SQLModel.metadata.create_all(engine)
 
@@ -109,7 +163,9 @@ class GmailEmailSenderComponent(LCToolComponent):
                 ).all()
 
                 if not tokens:
-                    raise ToolException("No token was found.")
+                    error_message = "Error: No token was found."
+                    logger.error(error_message)
+                    return [Data(text=error_message)]
 
                 # Retrieve the Gmail token.
                 gmail_token = next(
@@ -117,15 +173,17 @@ class GmailEmailSenderComponent(LCToolComponent):
                     None
                 )
                 if not gmail_token:
-                    raise ToolException("Gmail not connected or token not found.")
+                    error_message = "Error: Gmail not connected or token not found."
+                    logger.error(error_message)
+                    return [Data(text=error_message)]
 
-                # Ensure that the stored token contains the fields needed for refreshing.
+                # Ensure the token contains the fields needed for refreshing.
                 if not (gmail_token.refresh_token and gmail_token.token_uri and
                         gmail_token.client_id and gmail_token.client_secret):
-                    raise ToolException(
-                        "The Gmail integration token is incomplete. Please reauthenticate to provide "
-                        "refresh_token, token_uri, client_id, and client_secret."
-                    )
+                    error_message = ("Error: The Gmail integration token is incomplete. "
+                                     "Please reauthenticate to provide refresh_token, token_uri, client_id, and client_secret.")
+                    logger.error(error_message)
+                    return [Data(text=error_message)]
 
                 # Build the Gmail API credentials.
                 credentials = Credentials(
@@ -139,24 +197,54 @@ class GmailEmailSenderComponent(LCToolComponent):
 
                 # Build the Gmail API client.
                 service = build("gmail", "v1", credentials=credentials)
+        except Exception as e:
+            error_message = f"Error during token retrieval or service setup: {e}"
+            logger.error(error_message)
+            return [Data(text=error_message)]
 
-                # Create the MIME message.
-                message = MIMEText(body_text)
+        def send_email() -> str:
+            try:
+                # Create a multipart MIME message.
+                message = MIMEMultipart()
+                message.attach(MIMEText(body_text, "plain"))
+
+                # Set headers using comma-separated email addresses.
                 message['to'] = recipient
-                message['from'] = "me"  # "me" is a special value that tells Gmail to use the authenticated user.
+                if cc.strip():
+                    message['Cc'] = cc
+                if bcc.strip():
+                    message['Bcc'] = bcc
+                message['from'] = "me"  # "me" tells Gmail to use the authenticated user.
                 message['subject'] = subject
-                raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode()
 
-                # Prepare the payload for sending.
+                # Encode the message.
+                raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode()
                 email_body = {"raw": raw_message}
+
+                # Include thread ID if provided.
+                if thread_id.strip():
+                    email_body["threadId"] = thread_id.strip()
 
                 # Send the email via the Gmail API.
                 result = service.users().messages().send(userId="me", body=email_body).execute()
                 message_id = result.get("id", "unknown")
-        except Exception as e:
-            error_message = f"Error sending email: {e}"
-            logger.error(error_message)
-            raise ToolException(error_message) from e
 
-        result_text = f"Email sent successfully. Message ID: {message_id}"
-        return [Data(text=result_text)]
+                # Apply labels if provided.
+                if labels.strip():
+                    label_ids = [lab.strip() for lab in labels.split(",") if lab.strip()]
+                    service.users().messages().modify(
+                        userId="me", id=message_id, body={"addLabelIds": label_ids}
+                    ).execute()
+                return message_id
+            except Exception as e:
+                error_message = f"Error sending email: {e}"
+                logger.error(error_message)
+                return error_message
+
+        # Send the email immediately.
+        message_id = send_email()
+        if message_id.startswith("Error"):
+            return [Data(text=message_id)]
+        else:
+            result_text = f"Email sent successfully. Message ID: {message_id}"
+            return [Data(text=result_text)]

@@ -242,9 +242,9 @@ export default function KnowledgeBaseFilesUpload({
         </div>
       )}
 
-      <div className="flex gap-6 flex-1 min-h-0">
+      <div className="flex gap-6 flex-1 min-h-0 dark:bg-[#18181b]">
         <div className="w-1/4 flex flex-col">
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm">
+          <div className="bg-white dark:bg-[#18181b] rounded-lg shadow-sm">
             <div className="p-4 border-b border-gray-100 dark:border-gray-700">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -318,7 +318,7 @@ export default function KnowledgeBaseFilesUpload({
             </div>
           </div>
 
-          <div className="flex-1 bg-white dark:bg-gray-800 rounded-lg shadow-sm">
+          <div className="flex-1 bg-white dark:bg-[#18181b] rounded-lg shadow-sm">
             <div className="h-[200px] overflow-y-auto">
               {fileCategories.find((c) => c.id === activeCategory)?.files.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-full text-center p-4 text-gray-500">

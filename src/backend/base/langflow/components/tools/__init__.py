@@ -37,6 +37,16 @@ with warnings.catch_warnings():
     from .astradb import AstraDBToolComponent
     from .astradb_cql import AstraDBCQLToolComponent
 
+from .gmail_email_draft import GmailEmailDraftComponent
+from .gmail_email_fetch import GmailEmailFetchComponent
+from .gmail_email_responder import GmailEmailResponderComponent
+from .gmail_email_send import GmailEmailSenderComponent
+from .google_calendar_create import GoogleCalendarEventCreatorComponent
+from .google_calendar_fetch import GoogleCalendarEventLoaderComponent
+from .google_calendar_modify import GoogleCalendarEventModifierComponent
+from .google_sheets_load import GoogleSheetsDataLoaderComponent
+from .google_sheets_update import GoogleSheetsDataModifierComponent
+
 __all__ = [
     "ArXivComponent",
     "AstraDBCQLToolComponent",
@@ -71,5 +81,14 @@ __all__ = [
     "YfinanceToolComponent",
     "GmailToolComponent",
     "GmailSendEmailComponent",
-    "AlphaVantageComponent"
+    "AlphaVantageComponent",
+    "GmailEmailDraftComponent",
+    "GmailEmailFetchComponent",
+    "GmailEmailResponderComponent",
+    "GmailEmailSenderComponent",
+    "GoogleCalendarEventCreatorComponent",
+    "GoogleCalendarEventLoaderComponent",
+    "GoogleCalendarEventModifierComponent",
+    "GoogleSheetsDataLoaderComponent",
+    "GoogleSheetsDataModifierComponent"
 ]

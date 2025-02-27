@@ -16,14 +16,13 @@ from langflow.inputs import IntInput, StrInput
 from langflow.schema import Data
 
 # Import your IntegrationToken model.
-# Adjust the import path to match your project structure.
 from langflow.services.database.models.integration_token.model import IntegrationToken
 
 # Define the scopes required by the Gmail API.
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 
 
-# Define the input schema.
+# Update the input schema to include new filters.
 class GmailEmailSchema(BaseModel):
     max_results: int = Field(
         5,
@@ -33,15 +32,31 @@ class GmailEmailSchema(BaseModel):
         ...,
         description="The current user's ID."
     )
+    labels: str = Field(
+        "",
+        description="Comma separated list of Gmail labels (e.g., INBOX, SOCIAL). Defaults to INBOX if left blank."
+    )
+    after_date: str = Field(
+        "",
+        description="Retrieve emails after this date (format: YYYY/MM/DD)."
+    )
+    before_date: str = Field(
+        "",
+        description="Retrieve emails before this date (format: YYYY/MM/DD)."
+    )
+    additional_query: str = Field(
+        "",
+        description="Optional additional Gmail query string (e.g., 'subject:Hello')."
+    )
 
 
 class GmailEmailLoaderComponent(LCToolComponent):
     display_name = "Gmail Email Loader"
     description = (
-        "Load emails from a Gmail account by directly connecting to the database to retrieve "
-        "the stored integration token. Returns email details such as subject, sender, date, and snippet."
+        "Load emails from a Gmail account"
+        "Returns email details such as subject, sender, date, and snippet."
     )
-    icon = "Gmail"  # Update with your desired icon identifier.
+    icon = "Gmail"
     name = "GmailEmailLoaderTool"
 
     # Define the tool's input fields.
@@ -60,11 +75,46 @@ class GmailEmailLoaderComponent(LCToolComponent):
             value="",
             required=False
         ),
+        StrInput(
+            name="labels",
+            display_name="Labels",
+            info="Comma separated list of Gmail labels (e.g., INBOX, UNREAD, STARRED, IMPORTANT, DRAFT, CATEGORY_PERSONAL, CATEGORY_SOCIAL).",
+            value="",
+            required=False
+        ),
+        StrInput(
+            name="after_date",
+            display_name="After Date",
+            info="Filter emails received after this date (YYYY/MM/DD).",
+            value="",
+            required=False
+        ),
+        StrInput(
+            name="before_date",
+            display_name="Before Date",
+            info="Filter emails received before this date (YYYY/MM/DD).",
+            value="",
+            required=False
+        ),
+        StrInput(
+            name="additional_query",
+            display_name="Additional Query",
+            info="Optional additional Gmail query string (e.g., 'subject:Hello').",
+            value="",
+            required=False
+        ),
     ]
 
     def run_model(self) -> list[Data]:
         """Synchronously run the tool using a direct database connection."""
-        return self._gmail_email_loader_sync(self.max_results, self.user_id)
+        return self._gmail_email_loader_sync(
+            self.max_results,
+            self.user_id,
+            self.labels,
+            self.after_date,
+            self.before_date,
+            self.additional_query,
+        )
 
     def build_tool(self) -> Tool:
         """Build the structured tool instance."""
@@ -72,40 +122,44 @@ class GmailEmailLoaderComponent(LCToolComponent):
             name="gmail_email_loader",
             description=(
                 "Fetch email details (subject, sender, date, snippet) from a Gmail account "
-                "by directly querying the database for the integration token."
+                "by directly querying the database for the integration token and applying optional filters."
             ),
             func=self._gmail_email_loader_sync,
             args_schema=GmailEmailSchema,
         )
 
-    def _gmail_email_loader_sync(self, max_results: int, user_id: str) -> list[Data]:
+    def _gmail_email_loader_sync(
+        self,
+        max_results: int = 5,
+        user_id: str = "",
+        labels: str = "",
+        after_date: str = "",
+        before_date: str = "",
+        additional_query: str = ""
+    ) -> list[Data]:
         # Validate and convert the provided user_id into a UUID.
         try:
             user_uuid = UUID(self.user_id)
         except Exception as e:
             error_message = f"Invalid user_id provided: {e}"
             logger.error(error_message)
-            raise ToolException(error_message) from e
+            return [Data(text=error_message)]
 
         # Create a direct database connection using an environment variable or a default value.
-        database_url = os.getenv("LANGFLOW_DATABASE_URL", "sqlite:///langflow.db")
         engine = create_engine("sqlite:///src/backend/base/langflow/langflow.db")
-
         # Create all tables if they do not exist.
         SQLModel.metadata.create_all(engine)
 
         try:
-            # Open a synchronous session.
             with Session(engine) as db:
-                # Pass the UUID object directly to the query.
                 tokens = db.exec(
                     select(IntegrationToken).where(IntegrationToken.user_id == user_uuid)
                 ).all()
-                
-                print(tokens)
-                
+
                 if not tokens:
-                    raise ToolException("No token was found.")
+                    error_message = "No token was found."
+                    logger.error(error_message)
+                    return [Data(text=error_message)]
 
                 # Retrieve the Gmail token.
                 gmail_token = next(
@@ -113,7 +167,9 @@ class GmailEmailLoaderComponent(LCToolComponent):
                     None
                 )
                 if not gmail_token:
-                    raise ToolException("Gmail not connected or token not found.")
+                    error_message = "Gmail not connected or token not found."
+                    logger.error(error_message)
+                    return [Data(text=error_message)]
 
                 # Build the Gmail API credentials.
                 credentials = Credentials(
@@ -128,9 +184,28 @@ class GmailEmailLoaderComponent(LCToolComponent):
                 # Build the Gmail API client.
                 service = build("gmail", "v1", credentials=credentials)
 
-                # Retrieve the list of message IDs from the INBOX.
+                # Build query string based on date filters and any additional query.
+                query_parts = []
+                if after_date:
+                    query_parts.append(f"after:{after_date}")
+                if before_date:
+                    query_parts.append(f"before:{before_date}")
+                if additional_query:
+                    query_parts.append(additional_query)
+                query = " ".join(query_parts).strip() if query_parts else None
+
+                # Process labels - default to INBOX if none provided.
+                if labels:
+                    labels_list = [label.strip() for label in labels.split(",") if label.strip()]
+                else:
+                    labels_list = ["INBOX"]
+
+                # Retrieve the list of message IDs using both labelIds and query.
                 results = service.users().messages().list(
-                    userId="me", maxResults=max_results, labelIds=["INBOX"]
+                    userId="me",
+                    maxResults=max_results,
+                    labelIds=labels_list,
+                    q=query
                 ).execute()
 
                 messages = results.get("messages", [])
@@ -166,7 +241,7 @@ class GmailEmailLoaderComponent(LCToolComponent):
         except Exception as e:
             error_message = f"Error fetching emails: {e}"
             logger.error(error_message)
-            raise ToolException(error_message) from e
+            return [Data(text=error_message)]
 
         # Process and format the emails into a list of Data objects.
         data_list = []
