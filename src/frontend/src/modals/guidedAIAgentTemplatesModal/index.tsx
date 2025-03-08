@@ -1103,7 +1103,8 @@ export default function GuidedAIAgentTemplatesModal({
                 || tool.display_name === "Google Calendar Event Loader"
                 || tool.display_name === "Google Calendar Event Modifier"
                 || tool.display_name === "Google Sheets Data Loader"
-                || tool.display_name === "Google Sheets Data Modifier") {
+                || tool.display_name === "Google Sheets Data Modifier"
+                || tool.display_name === "Slack Message Sender") {
                 // Get the access token from cookies
                 const token = document.cookie
                     .split('; ')

@@ -3,8 +3,10 @@ import { persist } from 'zustand/middleware';
 
 interface IntegrationStore {
   gmailConnected: boolean;
+  slackConnected: boolean;
   apiKey: string | null;
   setGmailConnected: (value: boolean) => void;
+  setSlackConnected: (value: boolean) => void;
   setApiKey: (key: string | null) => void;
   getAuthHeaders: () => Record<string, string>;
 }
@@ -13,8 +15,10 @@ export const useIntegrationStore = create<IntegrationStore>()(
   persist(
     (set, get) => ({
       gmailConnected: false,
+      slackConnected: false,
       apiKey: null,
       setGmailConnected: (value: boolean) => set({ gmailConnected: value }),
+      setSlackConnected: (value: boolean) => set({ slackConnected: value }),
       setApiKey: (key: string | null) => set({ apiKey: key }),
       getAuthHeaders: () => {
         const token = document.cookie

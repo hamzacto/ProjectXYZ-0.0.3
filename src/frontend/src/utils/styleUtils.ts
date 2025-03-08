@@ -709,6 +709,7 @@ export const nodeIconsLucide: iconsType = {
   SambaNova: SambaNovaIcon,
   Searx: SearxIcon,
   SlackDirectoryLoader: SvgSlackIcon,
+  Slack: SvgSlackIcon,
   SpiderTool: SpiderIcon,
   SupabaseVectorStore: SupabaseIcon,
   Supabase: SupabaseIcon,

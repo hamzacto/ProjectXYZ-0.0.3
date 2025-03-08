@@ -9,6 +9,7 @@ from google_auth_oauthlib.flow import Flow as GoogleFlow
 from googleapiclient.discovery import build
 from fastapi.security import OAuth2PasswordBearer
 
+import requests
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from fastapi import APIRouter, HTTPException, Depends
@@ -18,9 +19,9 @@ import base64
 import os
 import time
 from email.mime.text import MIMEText
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Dict, List, Optional
 from uuid import UUID, uuid4
-
+from sqlalchemy import select
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query, Request, Cookie
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -38,6 +39,7 @@ from langflow.helpers.user import get_user_by_flow_id_or_endpoint_name
 from langflow.services.auth.utils import get_current_active_user, oauth2_login, get_current_user_by_jwt
 from langflow.services.database.models.flow import Flow
 from langflow.services.database.models.user.model import User
+from langflow.services.database.models.integration_token.model import IntegrationToken
 from langflow.services.deps import get_session_service, get_telemetry_service
 from langflow.services.telemetry.schema import RunPayload
 from dotenv import load_dotenv
@@ -68,7 +70,7 @@ from contextlib import asynccontextmanager
 import json
 from langflow.api.v1.endpoints import simple_run_flow
 from google.auth import jwt
-from google.auth.transport import requests
+from google.auth.transport import requests as google_requests
 
 redis = aioredis.from_url("redis://localhost:6379")
 
@@ -113,6 +115,21 @@ REDIRECT_URI = "http://localhost:3000/api/v1/auth/callback"
 TOKEN_STORAGE_PATH = os.path.join(BASE_DIR, "token.pkl")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 router = APIRouter(tags=["Gmail"])
+
+# Slack API configuration
+SLACK_CLIENT_ID = os.getenv("SLACK_CLIENT_ID")
+SLACK_CLIENT_SECRET = os.getenv("SLACK_CLIENT_SECRET")
+SLACK_REDIRECT_URI = os.getenv("SLACK_REDIRECT_URI")
+SLACK_SCOPES = [
+    "channels:history", 
+    "channels:read",
+    "chat:write",
+    "im:history",
+    "im:read",
+    "im:write",
+    "users:read"
+]
+
 async def get_gmail_profile(email_service):
     profile = email_service.users().getProfile(userId="me").execute()
     print("profile email", profile.get("emailAddress"))
@@ -434,7 +451,6 @@ async def create_integration_trigger_endpoint(
             status_code=500,
             detail=f"Error creating integration trigger: {str(e)}"
         )
-import httplib2
 
 @router.post("/gmail/watch/{integration_id}")
 async def watch_gmail(
@@ -574,7 +590,7 @@ async def process_gmail_notification(integration_id: str, new_history_id: str):
 
         # Refresh the credentials if they're expired
         if not creds.valid:
-            creds.refresh(Request())
+            creds.refresh(google_requests.Request())
             # Update the token in the database
             integration.access_token = creds.token
             await update_integration_token(db, integration.id, integration)
@@ -827,3 +843,436 @@ async def verify_pubsub_token(request: Request):
         # For testing, don't raise the exception
         return True
         # raise HTTPException(status_code=403, detail=f"Token verification failed: {str(e)}")
+
+@router.get("/auth/slack/login")
+async def slack_login(
+    current_user: User = Depends(oauth2_login),
+    db: AsyncSession = Depends(get_session)
+):
+    """
+    Initiates the Slack OAuth flow.
+    """
+    if not SLACK_CLIENT_ID:
+        raise HTTPException(status_code=500, detail="Slack client ID not configured")
+    
+    # Generate a state parameter to prevent CSRF
+    state = str(uuid4())
+    
+    # Create the Slack OAuth URL
+    auth_url = (
+        f"https://slack.com/oauth/v2/authorize"
+        f"?client_id={SLACK_CLIENT_ID}"
+        f"&scope={'%20'.join(SLACK_SCOPES)}"
+        f"&redirect_uri={SLACK_REDIRECT_URI}"
+        f"&state={state}"
+    )
+    
+    return RedirectResponse(auth_url)
+
+@router.get("/auth/slack/callback")
+async def slack_callback(
+    state: str,
+    code: str,
+    access_token: str = Cookie(None, alias="access_token_lf"),
+    db: AsyncSession = Depends(get_session)
+):
+    """
+    Handles the Slack OAuth callback.
+    """
+    try:
+        if not access_token:
+            # Instead of throwing an error, redirect to app with error status
+            html_content = """
+            <html>
+                <script type="text/javascript">
+                    window.opener.postMessage({ slackError: "authentication_required" }, "*");
+                    window.close();
+                </script>
+                <body>Authentication required. Please login first and try again.</body>
+            </html>
+            """
+            return HTMLResponse(content=html_content)
+        
+        current_user = await get_current_user_by_jwt(access_token, db)
+        
+        if not SLACK_CLIENT_ID or not SLACK_CLIENT_SECRET:
+            raise HTTPException(status_code=500, detail="Slack client configuration missing")
+        
+        # Exchange the code for an access token
+        response = requests.post(
+            "https://slack.com/api/oauth.v2.access",
+            data={
+                "client_id": SLACK_CLIENT_ID,
+                "client_secret": SLACK_CLIENT_SECRET,
+                "code": code,
+                "redirect_uri": SLACK_REDIRECT_URI
+            }
+        )
+        
+        token_data = response.json()
+        
+        if not token_data.get("ok"):
+            # Return error to frontend instead of throwing exception
+            html_content = f"""
+            <html>
+                <script type="text/javascript">
+                    window.opener.postMessage({{ slackError: "{token_data.get('error')}" }}, "*");
+                    window.close();
+                </script>
+                <body>Slack authentication error: {token_data.get('error')}</body>
+            </html>
+            """
+            return HTMLResponse(content=html_content)
+        
+        # Extract token information
+        access_token = token_data.get("access_token")
+        refresh_token = token_data.get("refresh_token", None)
+        
+        # Get the bot user ID and workspace information
+        bot_user_id = token_data.get("bot_user_id")
+        team_id = token_data.get("team", {}).get("id")
+        team_name = token_data.get("team", {}).get("name")
+        
+        # Fetch the bot's profile to get the associated email (if available)
+        slack_email = None
+        try:
+            user_info_response = requests.get(
+                "https://slack.com/api/users.info",
+                params={"user": bot_user_id},
+                headers={"Authorization": f"Bearer {access_token}"}
+            )
+            user_info = user_info_response.json()
+            if user_info.get("ok"):
+                # Some bots may not have an email associated
+                slack_email = user_info.get("user", {}).get("profile", {}).get("email")
+        except Exception as e:
+            print(f"Error getting Slack user info: {str(e)}")
+        
+        # Store the token in the database
+        await create_integration_token(
+            db=db,
+            user_id=current_user.id,
+            service_name="slack",
+            access_token=access_token,
+            refresh_token=refresh_token,
+            token_uri=None,  # Slack doesn't use token_uri
+            client_id=SLACK_CLIENT_ID,
+            client_secret=SLACK_CLIENT_SECRET,
+            expires_at=None,  # Slack tokens typically don't expire unless revoked
+            email_address=slack_email
+        )
+        
+        html_content = """
+        <html>
+            <script type="text/javascript">
+                window.opener.postMessage({ slackConnected: true }, "*");
+                window.close();
+            </script>
+            <body>Slack authentication complete. Closing window...</body>
+        </html>
+        """
+        return HTMLResponse(content=html_content)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Slack OAuth error: {str(e)}")
+
+@router.post("/slack/message")
+async def send_slack_message(
+    channel: str = Body(..., embed=True, description="Channel or user ID to send message to"),
+    message: str = Body(..., embed=True, description="Message text to send"),
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_session)
+):
+    """
+    Send a message to a Slack channel or user.
+    """
+    try:
+        tokens = await get_integration_tokens(db, current_user.id)
+        slack_token = next((token for token in tokens if token.service_name == "slack"), None)
+        
+        if not slack_token:
+            raise HTTPException(status_code=401, detail="Slack not connected")
+        
+        # Send the message using Slack's Web API
+        response = requests.post(
+            "https://slack.com/api/chat.postMessage",
+            headers={"Authorization": f"Bearer {slack_token.access_token}"},
+            json={
+                "channel": channel,
+                "text": message
+            }
+        )
+        
+        result = response.json()
+        if not result.get("ok"):
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Error sending Slack message: {result.get('error')}"
+            )
+        
+        return {
+            "status": "success", 
+            "message_id": result.get("ts"),
+            "channel": result.get("channel")
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Error sending Slack message: {str(e)}"
+        )
+
+@router.post("/slack/webhook")
+async def slack_webhook(
+    request: Request,
+    background_tasks: BackgroundTasks
+):
+    """
+    Endpoint for receiving Slack Events API notifications.
+    This endpoint will verify the request and then process events asynchronously.
+    """
+    try:
+        body = await request.json()
+        
+        # Handle Slack URL verification challenge
+        if body.get("type") == "url_verification":
+            return {"challenge": body.get("challenge")}
+        
+        # Process the event in the background
+        if "event" in body:
+            event = body.get("event", {})
+            event_type = event.get("type")
+            
+            # Currently we're handling message events
+            if event_type == "message":
+                # Ignore bot messages to prevent potential infinite loops
+                if not event.get("bot_id") and not event.get("subtype") == "bot_message":
+                    background_tasks.add_task(
+                        process_slack_message,
+                        team_id=body.get("team_id"),
+                        event=event
+                    )
+        
+        # Slack expects a 200 OK response quickly
+        return {"status": "processing"}
+    except Exception as e:
+        print(f"Error processing Slack webhook: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+async def process_slack_message(team_id: str, event: Dict):
+    """
+    Process a Slack message event and trigger appropriate flows.
+    """
+    try:
+        db_gen = get_session()
+        db = await db_gen.__anext__()
+        
+        try:
+            # Find any integration tokens that match this workspace
+            statement = select(IntegrationToken).where(
+                IntegrationToken.service_name == "slack"
+            )
+            results = await db.exec(statement)
+            tokens = results.all()
+            
+            # We need to verify team_id to find the right integration
+            # This requires an API call to Slack for each token
+            matching_token = None
+            
+            for token in tokens:
+                try:
+                    response = requests.get(
+                        "https://slack.com/api/team.info",
+                        headers={"Authorization": f"Bearer {token.access_token}"}
+                    )
+                    result = response.json()
+                    if result.get("ok") and result.get("team", {}).get("id") == team_id:
+                        matching_token = token
+                        break
+                except Exception as e:
+                    print(f"Error checking Slack team: {str(e)}")
+            
+            if not matching_token:
+                print(f"No matching Slack integration found for team ID: {team_id}")
+                return
+            
+            # Get triggers configured for this integration
+            triggers = await get_integration_triggers_by_integration(db, matching_token.id)
+            
+            if not triggers:
+                print(f"No triggers configured for Slack integration {matching_token.id}")
+                return
+            
+            # Get the message details
+            channel_id = event.get("channel")
+            message_text = event.get("text", "")
+            thread_ts = event.get("thread_ts")
+            message_ts = event.get("ts")
+            
+            # Process for each configured trigger
+            for trigger in triggers:
+                flow_id = trigger.flow_id
+                
+                # Check if flow exists
+                try:
+                    flow = await get_flow_by_id_or_endpoint_name(flow_id_or_name=str(flow_id))
+                    if not flow:
+                        print(f"Flow {flow_id} not found")
+                        continue
+                        
+                    # Create or get thread session
+                    thread_id = thread_ts or message_ts  # If not in a thread, use the message ts as thread id
+                    session_id = str(uuid4())  # Create a new session ID for each flow run
+                    
+                    # Prepare session
+                    session_service = get_session_service()
+                    if hasattr(session_service, "set_session"):
+                        await session_service.set_session(
+                            session_id=session_id,
+                            chat_data={
+                                "flow_id": str(flow_id),
+                                "messages": [],
+                                "chat_history": []
+                            }
+                        )
+                    else:
+                        # Fallback: initialize a sessions dictionary if it doesn't exist
+                        if not hasattr(session_service, "sessions"):
+                            session_service.sessions = {}
+                        session_service.sessions[session_id] = {
+                            "flow_id": str(flow_id),
+                            "messages": [],
+                            "chat_history": []
+                        }
+                    
+                    # Trigger the flow with the message content
+                    await trigger_flow_for_slack(
+                        flow_id=flow_id,
+                        message=message_text,
+                        channel_id=channel_id,
+                        thread_ts=thread_ts,
+                        db=db,
+                        token=matching_token
+                    )
+                except Exception as flow_error:
+                    print(f"Error triggering flow {flow_id}: {str(flow_error)}")
+        finally:
+            await db_gen.aclose()
+    except Exception as e:
+        print(f"Error processing Slack message: {str(e)}")
+
+async def trigger_flow_for_slack(
+    flow_id: UUID, 
+    message: str, 
+    channel_id: str,
+    thread_ts: Optional[str],
+    db: AsyncSession,
+    token: IntegrationToken
+):
+    """
+    Trigger a flow based on a Slack message and send the response back to Slack.
+    """
+    try:
+        # Get the flow
+        flow = await get_flow_by_id_or_endpoint_name(flow_id_or_name=str(flow_id))
+        user = await get_user_by_flow_id_or_endpoint_name(str(flow_id))
+        
+        if not user:
+            raise ValueError("User not found for flow")
+        
+        # Create service-specific lock key (to avoid concurrency issues)
+        lock_key = f"slack_flow:{flow_id}:{channel_id}:{thread_ts or 'new'}"
+        
+        async with redis_lock(lock_key):
+            # Run the flow with the message as input
+            inputs = {"message": message}
+            inputs_map = {}
+            
+            # Find which node to connect the message to
+            for node in flow.data.get("nodes", []):
+                if node.get("node_type", "") == "chatInputNode":
+                    node_id = node.get("id")
+                    inputs_map[node_id] = {"message": message}
+                
+            api_request = SimplifiedAPIRequest(
+                inputs=inputs,
+                inputs_map=inputs_map,
+                is_interactive=False,
+                tweaks={},
+                session_id=str(uuid4())
+            )
+            
+            response = await simple_run_flow(
+                flow_id_or_name=str(flow_id),
+                api_request=api_request,
+                user=user
+            )
+            
+            # Process and send the response back to Slack
+            if response:
+                # Extract the reply message from the flow output
+                reply = None
+                
+                # Look for output nodes with text or message fields
+                if isinstance(response, dict):
+                    for key, value in response.items():
+                        if isinstance(value, str) and value.strip():
+                            reply = value
+                            break
+                elif isinstance(response, str) and response.strip():
+                    reply = response
+                
+                if reply:
+                    # Send the reply back to Slack
+                    thread_params = {"thread_ts": thread_ts} if thread_ts else {}
+                    
+                    slack_response = requests.post(
+                        "https://slack.com/api/chat.postMessage",
+                        headers={"Authorization": f"Bearer {token.access_token}"},
+                        json={
+                            "channel": channel_id,
+                            "text": reply,
+                            **thread_params
+                        }
+                    )
+                    
+                    if not slack_response.json().get("ok"):
+                        print(f"Error sending Slack response: {slack_response.json().get('error')}")
+    except Exception as e:
+        print(f"Error in trigger_flow_for_slack: {str(e)}")
+        # Optionally, send an error message to Slack
+
+@router.post("/slack/create-subscription")
+async def create_slack_subscription(
+    integration_id: UUID,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_session)
+):
+    """
+    Set up a Slack Events API subscription for the given integration.
+    
+    This endpoint provides instructions for setting up the Events API in the Slack API dashboard,
+    as Slack requires a publicly accessible URL for events.
+    """
+    try:
+        # Verify the integration belongs to the user and is a Slack integration
+        integration = await get_integration_token_by_id(db=db, token_id=integration_id)
+        if not integration or integration.service_name != "slack" or integration.user_id != current_user.id:
+            raise HTTPException(status_code=404, detail="Slack integration not found or unauthorized")
+        
+        # Provide instructions for setting up Slack Events API
+        return {
+            "message": "Slack Events API setup instructions",
+            "integration_id": str(integration_id),
+            "instructions": [
+                "1. Go to your Slack App configuration at https://api.slack.com/apps",
+                "2. Select your app and go to 'Event Subscriptions'",
+                "3. Enable Events and set the Request URL to: " + 
+                f"https://your-langflow-domain.com/api/v1/slack/webhook",
+                "4. Subscribe to the following bot events: message.channels, message.im",
+                "5. Save changes and reinstall your app if prompted"
+            ]
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error preparing Slack subscription: {str(e)}"
+        )

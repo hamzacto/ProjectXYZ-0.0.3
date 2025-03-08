@@ -3,6 +3,7 @@ import PageLayout from '../../components/common/pageLayout';
 import ForwardedIconComponent from '@/components/common/genericIconComponent';
 import { Button } from '@/components/ui/button';
 import { ChevronRight } from 'lucide-react';
+import { SlackIcon } from '@/icons/Slack';
 
 export default function GuidedAgentIntegrationsPage(): JSX.Element {
   const navigate = useNavigate();
@@ -28,6 +29,30 @@ export default function GuidedAgentIntegrationsPage(): JSX.Element {
               <Button 
                 variant="ghost"
                 onClick={() => navigate('/integrations/gmail')}
+                className="gap-2"
+              >
+                Configure
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+          
+          <div className="p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <div className="h-8 w-8 flex items-center justify-center">
+                  <SlackIcon />
+                </div>
+                <div>
+                  <h3 className="text-lg font-medium">Slack Integration</h3>
+                  <p className="text-sm text-muted-foreground">
+                    Connect to Slack to enable messaging capabilities
+                  </p>
+                </div>
+              </div>
+              <Button 
+                variant="ghost"
+                onClick={() => navigate('/integrations/slack')}
                 className="gap-2"
               >
                 Configure

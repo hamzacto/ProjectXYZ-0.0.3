@@ -46,6 +46,7 @@ from .google_calendar_fetch import GoogleCalendarEventLoaderComponent
 from .google_calendar_modify import GoogleCalendarEventModifierComponent
 from .google_sheets_load import GoogleSheetsDataLoaderComponent
 from .google_sheets_update import GoogleSheetsDataModifierComponent
+from .slack_message_send import SlackMessageSenderComponent
 
 __all__ = [
     "ArXivComponent",
@@ -70,6 +71,7 @@ __all__ = [
     "SearchComponent",
     "SerpAPIComponent",
     "SerpComponent",
+    "SlackMessageSenderComponent",
     "TavilySearchComponent",
     "TavilySearchToolComponent",
     "WikidataAPIComponent",
@@ -90,5 +92,5 @@ __all__ = [
     "GoogleCalendarEventLoaderComponent",
     "GoogleCalendarEventModifierComponent",
     "GoogleSheetsDataLoaderComponent",
-    "GoogleSheetsDataModifierComponent"
+    "GoogleSheetsDataModifierComponent"    
 ]
