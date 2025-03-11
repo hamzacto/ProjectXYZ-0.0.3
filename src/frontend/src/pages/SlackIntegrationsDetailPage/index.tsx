@@ -67,11 +67,7 @@ export default function SlackIntegrationsDetailPage() {
             }
             // Handle authentication errors
             if (event.data && event.data.slackError) {
-                if (event.data.slackError === "authentication_required") {
-                    setError("Authentication required. Please login and try again.");
-                } else {
-                    setError(`Slack authentication error: ${event.data.slackError}`);
-                }
+                setError(`Slack authentication error: ${event.data.slackError}`);
             }
         };
 
@@ -99,7 +95,7 @@ export default function SlackIntegrationsDetailPage() {
         const slackWindow = window.open(`/api/v1/auth/slack/login`, 'slack_auth', 'width=600,height=600');
         
         window.addEventListener('message', async (event) => {
-            if (event.data === 'slack_connected') {
+            if (event.data && event.data.slackConnected) {
                 await fetchIntegrations();
                 if (slackWindow) slackWindow.close();
             }

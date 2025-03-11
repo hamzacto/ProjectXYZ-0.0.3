@@ -44,7 +44,7 @@ from langflow.services.deps import get_session_service, get_telemetry_service
 from langflow.services.telemetry.schema import RunPayload
 from dotenv import load_dotenv
 
-from langflow.services.database.models.user.crud import create_integration_token, get_integration_tokens, delete_integration_token, get_integration_token_by_id, update_integration_token, create_integration_trigger
+from langflow.services.database.models.user.crud import create_integration_token, get_integration_tokens, delete_integration_token, get_integration_token_by_id, update_integration_token, create_integration_trigger, update_slack_token
 from langflow.services.database.models.integration_trigger.crud import get_integration_triggers_by_integration
 from langflow.services.database.models.integration_token.crud import get_integration_by_email_address
 from langflow.services.database.models.email_thread.crud import (
@@ -71,6 +71,7 @@ import json
 from langflow.api.v1.endpoints import simple_run_flow
 from google.auth import jwt
 from google.auth.transport import requests as google_requests
+import traceback
 
 redis = aioredis.from_url("redis://localhost:6379")
 
@@ -123,11 +124,12 @@ SLACK_REDIRECT_URI = os.getenv("SLACK_REDIRECT_URI")
 SLACK_SCOPES = [
     "channels:history", 
     "channels:read",
-    "chat:write",
+    "chat:write", 
     "im:history",
     "im:read",
     "im:write",
-    "users:read"
+    "users:read",
+    "users.profile:read"
 ]
 
 async def get_gmail_profile(email_service):
@@ -858,11 +860,11 @@ async def slack_login(
     # Generate a state parameter to prevent CSRF
     state = str(uuid4())
     
-    # Create the Slack OAuth URL
+    # Create the Slack OAuth URL with only user scopes, no bot scopes
     auth_url = (
         f"https://slack.com/oauth/v2/authorize"
         f"?client_id={SLACK_CLIENT_ID}"
-        f"&scope={'%20'.join(SLACK_SCOPES)}"
+        f"&user_scope={'%20'.join(SLACK_SCOPES)}"  # Only user scopes
         f"&redirect_uri={SLACK_REDIRECT_URI}"
         f"&state={state}"
     )
@@ -871,17 +873,15 @@ async def slack_login(
 
 @router.get("/auth/slack/callback")
 async def slack_callback(
+    request: Request,
     state: str,
     code: str,
-    access_token: str = Cookie(None, alias="access_token_lf"),
+    access_token_lf: str = Cookie(None, alias="access_token_lf"),
     db: AsyncSession = Depends(get_session)
 ):
-    """
-    Handles the Slack OAuth callback.
-    """
-    try:
-        if not access_token:
-            # Instead of throwing an error, redirect to app with error status
+    try:  
+        if not access_token_lf:
+            print("⚠️ No access token found in cookies")
             html_content = """
             <html>
                 <script type="text/javascript">
@@ -892,27 +892,45 @@ async def slack_callback(
             </html>
             """
             return HTMLResponse(content=html_content)
-        
-        current_user = await get_current_user_by_jwt(access_token, db)
+
+        current_user = await get_current_user_by_jwt(access_token_lf, db)
+        print(f"Current user ID: {current_user.id}")
         
         if not SLACK_CLIENT_ID or not SLACK_CLIENT_SECRET:
+            print("⚠️ Slack client configuration missing")
             raise HTTPException(status_code=500, detail="Slack client configuration missing")
+
+        # Exchange code for token
+        print("\n----- SENDING TOKEN REQUEST TO SLACK -----")
+        request_data = {
+            "client_id": SLACK_CLIENT_ID,
+            "client_secret": SLACK_CLIENT_SECRET,
+            "code": code,
+            "redirect_uri": SLACK_REDIRECT_URI
+        }
         
-        # Exchange the code for an access token
         response = requests.post(
             "https://slack.com/api/oauth.v2.access",
-            data={
-                "client_id": SLACK_CLIENT_ID,
-                "client_secret": SLACK_CLIENT_SECRET,
-                "code": code,
-                "redirect_uri": SLACK_REDIRECT_URI
-            }
+            data=request_data
         )
         
+        print("\n----- SLACK TOKEN RESPONSE -----")
+        print(f"Response status code: {response.status_code}")
+        print(f"Response headers: {dict(response.headers)}")
+        
+        # After receiving the response from Slack
         token_data = response.json()
+        print("\n----- RAW TOKEN DATA STRUCTURE -----")
+        print(f"token_data keys: {token_data.keys()}")
+        if "authed_user" in token_data:
+            print(f"authed_user keys: {token_data['authed_user'].keys()}")
+            if "access_token" in token_data["authed_user"]:
+                token_value = token_data["authed_user"]["access_token"]
+                print(f"Raw token length: {len(token_value)}")
+                print(f"Raw token prefix: {token_value[:8] if len(token_value) >= 8 else token_value}")
         
         if not token_data.get("ok"):
-            # Return error to frontend instead of throwing exception
+            print(f"⚠️ Slack error: {token_data.get('error')}")
             html_content = f"""
             <html>
                 <script type="text/javascript">
@@ -923,45 +941,92 @@ async def slack_callback(
             </html>
             """
             return HTMLResponse(content=html_content)
+
+        # Extract user token from authed_user
+        authed_user = token_data.get("authed_user", {})
+        user_access_token = authed_user.get("access_token")
+        refresh_token = authed_user.get("refresh_token", None)
+
+        # Debug token information
+        if user_access_token:
+            token_prefix = user_access_token[:8] if len(user_access_token) >= 8 else user_access_token
+            print(f"User token prefix: {token_prefix}...")
+            
+            # Validate token format
+            if not user_access_token.startswith('xoxp-'):
+                print(f"⚠️ WARNING: User token does not have expected format (xoxp-). Prefix: {token_prefix}")
+        else:
+            print("⚠️ No user access token received!")
+
+        # Get user info using the user token
+        slack_user_id = authed_user.get("id")
+        print(f"Slack user ID: {slack_user_id}")
         
-        # Extract token information
-        access_token = token_data.get("access_token")
-        refresh_token = token_data.get("refresh_token", None)
-        
-        # Get the bot user ID and workspace information
-        bot_user_id = token_data.get("bot_user_id")
-        team_id = token_data.get("team", {}).get("id")
-        team_name = token_data.get("team", {}).get("name")
-        
-        # Fetch the bot's profile to get the associated email (if available)
         slack_email = None
         try:
+            print("\n----- GETTING SLACK USER INFO -----")
             user_info_response = requests.get(
                 "https://slack.com/api/users.info",
-                params={"user": bot_user_id},
-                headers={"Authorization": f"Bearer {access_token}"}
+                params={"user": slack_user_id},
+                headers={"Authorization": f"Bearer {user_access_token}"}
             )
+            print(f"User info response status: {user_info_response.status_code}")
+            
             user_info = user_info_response.json()
+            print(f"User info response: {user_info}")
+            
             if user_info.get("ok"):
-                # Some bots may not have an email associated
                 slack_email = user_info.get("user", {}).get("profile", {}).get("email")
+                print(f"Slack email: {slack_email}")
+            else:
+                print(f"⚠️ Error getting user info: {user_info.get('error')}")
         except Exception as e:
-            print(f"Error getting Slack user info: {str(e)}")
-        
+            print(f"⚠️ Error getting Slack user info: {str(e)}")
+
         # Store the token in the database
+        print("\n----- STORING TOKEN IN DATABASE -----")
+        if not user_access_token:
+            print("⚠️ ERROR: No user access token to store!")
+            html_content = """
+            <html>
+                <script type="text/javascript">
+                    window.opener.postMessage({ slackError: "no_user_token" }, "*");
+                    window.close();
+                </script>
+                <body>Error: No user token received from Slack. Please try again or contact support.</body>
+            </html>
+            """
+            return HTMLResponse(content=html_content)
+            
+        # Store the raw token without any processing or transformation
+        print(f"Token length before storage: {len(user_access_token)}")
+        print(f"Token prefix before storage: {user_access_token[:8] if len(user_access_token) >= 8 else user_access_token}")
+
+        # Debug the token string in detail to identify any encoding issues
+        print("\n----- TOKEN ENCODING DEBUG -----")
+        print(f"Token type: {type(user_access_token)}")
+        print(f"Token hex representation: {' '.join([hex(ord(c)) for c in user_access_token[:10]])}")
+        print(f"Is token ASCII? {all(ord(c) < 128 for c in user_access_token)}")
+        
+        # Create a clean copy of the token to avoid any reference issues
+        clean_token = str(user_access_token).strip()
+        print(f"Stored token prefix: {clean_token}")
+        # Create token in database with the clean token
         await create_integration_token(
             db=db,
             user_id=current_user.id,
             service_name="slack",
-            access_token=access_token,
+            access_token=clean_token,
             refresh_token=refresh_token,
-            token_uri=None,  # Slack doesn't use token_uri
+            token_uri=None,
             client_id=SLACK_CLIENT_ID,
             client_secret=SLACK_CLIENT_SECRET,
-            expires_at=None,  # Slack tokens typically don't expire unless revoked
+            expires_at=None,
             email_address=slack_email
         )
-        
+        print("✅ Token stored successfully")
+
+        print("\n----- RETURNING SUCCESS RESPONSE -----")
         html_content = """
         <html>
             <script type="text/javascript">
@@ -971,8 +1036,13 @@ async def slack_callback(
             <body>Slack authentication complete. Closing window...</body>
         </html>
         """
+        print("===== END SLACK CALLBACK DEBUG INFO =====\n")
         return HTMLResponse(content=html_content)
     except Exception as e:
+        print(f"\n⚠️ EXCEPTION IN SLACK CALLBACK: {str(e)}")
+        print(f"Exception type: {type(e)}")
+        print(f"Exception traceback: {traceback.format_exc()}")
+        print("===== END SLACK CALLBACK DEBUG INFO =====\n")
         raise HTTPException(status_code=400, detail=f"Slack OAuth error: {str(e)}")
 
 @router.post("/slack/message")
@@ -1275,4 +1345,104 @@ async def create_slack_subscription(
         raise HTTPException(
             status_code=500,
             detail=f"Error preparing Slack subscription: {str(e)}"
+        )
+
+@router.post("/slack/fix-token")
+async def fix_slack_token(
+    token: str = Body(..., embed=True, description="The new Slack token to store"), 
+    integration_id: UUID = Body(..., embed=True, description="The integration ID to update"),
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_session)
+):
+    """
+    Manually update a Slack token in the database.
+    
+    This endpoint is useful when a token needs to be fixed or updated without going
+    through the OAuth flow again. Only token owners can update their tokens.
+    """
+    try:
+        # Verify the integration belongs to the user and is a Slack integration
+        integration = await get_integration_token_by_id(db=db, token_id=integration_id)
+        if not integration or integration.service_name != "slack" or integration.user_id != current_user.id:
+            raise HTTPException(status_code=404, detail="Slack integration not found or unauthorized")
+        
+        # Validate the token format
+        if not token.startswith("xoxp-") and not token.startswith("xoxb-"):
+            raise HTTPException(
+                status_code=400, 
+                detail="Invalid Slack token format. Must start with 'xoxp-' (for user tokens) or 'xoxb-' (for bot tokens)."
+            )
+        
+        # Update the token in the database
+        # The update_slack_token function expects user_id and new_token parameters
+        await update_slack_token(
+            db=db,
+            integration_id=integration_id,
+            new_token=token
+        )
+        
+        return {
+            "message": "Slack token updated successfully",
+            "integration_id": str(integration_id)
+        }
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error updating Slack token: {str(e)}"
+        )
+
+@router.get("/encryption-key/status", dependencies=[Depends(get_current_active_user)])
+async def check_encryption_key():
+    """
+    Check the status of the encryption key for debugging token encryption/decryption issues.
+    This is an administrative endpoint that should be secured in production.
+    """
+    try:
+        from cryptography.fernet import Fernet
+        import base64
+        import os
+        
+        # First check environment variable
+        env_key = os.getenv("LANGFLOW_ENCRYPTION_KEY")
+        
+        # Check for key in various places
+        key_locations = []
+        for location in [".env", "src/backend/base/langflow/.env", "src/backend/.env", ".encryption_key"]:
+            if os.path.exists(location):
+                key_locations.append(location)
+        
+        # Also check TOKEN_ENCRYPTION_KEY
+        token_key = os.getenv("TOKEN_ENCRYPTION_KEY")
+        
+        # Create response with key information (careful not to expose the actual key)
+        response = {
+            "status": "ok" if env_key or token_key else "missing",
+            "langflow_key_exists": bool(env_key),
+            "token_key_exists": bool(token_key),
+            "potential_key_files": key_locations,
+            "key_valid": False
+        }
+        
+        # Test that the key is valid by creating a Fernet instance
+        try:
+            if env_key:
+                f = Fernet(env_key.encode())
+                test_token = f.encrypt(b"test").decode()
+                response["key_valid"] = True
+                response["key_test"] = "passed"
+            elif token_key:
+                f = Fernet(token_key.encode())
+                test_token = f.encrypt(b"test").decode()
+                response["key_valid"] = True
+                response["key_test"] = "passed using TOKEN_ENCRYPTION_KEY"
+        except Exception as e:
+            response["key_test"] = f"failed: {str(e)}"
+        
+        return response
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error checking encryption key: {str(e)}"
         )

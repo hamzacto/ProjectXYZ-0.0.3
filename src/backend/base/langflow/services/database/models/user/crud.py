@@ -10,7 +10,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from langflow.services.database.models.user.model import User, UserUpdate
 
-from langflow.services.database.models.integration_token.model import IntegrationToken
+from langflow.services.database.models.integration_token.model import IntegrationToken, encrypt_token
 
 async def get_user_by_username(db: AsyncSession, username: str) -> User | None:
     stmt = select(User).where(User.username == username)
@@ -77,10 +77,13 @@ async def create_integration_token(
     expires_at: datetime | None = None,
     email_address: str | None = None
 ) -> IntegrationToken:
+    # Encrypt the token before storing in database
+    encrypted_token = encrypt_token(access_token)
+    
     token = IntegrationToken(
         user_id=user_id,
         service_name=service_name,
-        access_token=access_token,
+        access_token=encrypted_token,
         refresh_token=refresh_token,
         token_uri=token_uri,
         client_id=client_id,
@@ -119,6 +122,34 @@ async def update_integration_token(db: AsyncSession, token_id: UUID, token: Inte
 
     await db.commit()
     return existing_token
+
+async def update_slack_token(db: AsyncSession, integration_id: UUID, new_token: str):
+    """
+    Update the Slack token for a specific integration, replacing any corrupted or masked token.
+    """
+    # Import here to avoid circular imports
+    from langflow.services.database.models.integration_token.model import encrypt_token
+    
+    stmt = select(IntegrationToken).where(
+        IntegrationToken.id == integration_id,
+        IntegrationToken.service_name == "slack"
+    )
+    existing_token = (await db.exec(stmt)).first()
+    
+    if not existing_token:
+        raise HTTPException(status_code=404, detail="Slack integration not found")
+    
+    # Update the existing token
+    existing_token.access_token = encrypt_token(new_token)
+    existing_token.updated_at = datetime.now(timezone.utc)
+    
+    try:
+        await db.commit()
+        await db.refresh(existing_token)
+        return existing_token
+    except Exception as e:
+        await db.rollback()
+        raise e
 
 async def delete_integration_token(db: AsyncSession, token_id: UUID):
     token = await db.get(IntegrationToken, token_id)

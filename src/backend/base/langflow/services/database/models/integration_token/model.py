@@ -2,9 +2,70 @@ from datetime import datetime, timezone
 from uuid import UUID, uuid4
 from sqlmodel import Field, Relationship, SQLModel, Column, JSON
 from typing import TYPE_CHECKING
+import os
+import base64
+from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from loguru import logger
 
 if TYPE_CHECKING:
     from langflow.services.database.models.user import User
+
+# Encryption configuration
+# Generate a key or use an environment variable
+ENCRYPTION_KEY = os.getenv("TOKEN_ENCRYPTION_KEY", "")
+if not ENCRYPTION_KEY:
+    logger.warning("No TOKEN_ENCRYPTION_KEY set, generating a random one. Tokens will be lost on restart!")
+    # Generate a key for development purposes (in production, this should be stable)
+    salt = os.urandom(16)
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=salt,
+        iterations=100000,
+    )
+    ENCRYPTION_KEY = base64.urlsafe_b64encode(kdf.derive(b"langflow-temp-key"))
+
+# Initialize Fernet cipher
+try:
+    cipher_suite = Fernet(ENCRYPTION_KEY)
+except Exception as e:
+    logger.error(f"Error initializing encryption: {e}")
+    # Fallback to a development key
+    cipher_suite = None
+
+def encrypt_token(token: str) -> str:
+    """Encrypt a token before storing it in the database."""
+    if not cipher_suite:
+        logger.warning("Encryption not initialized, storing token as-is")
+        return token
+        
+    try:
+        if not token:
+            return token
+        return cipher_suite.encrypt(token.encode()).decode()
+    except Exception as e:
+        logger.error(f"Error encrypting token: {e}")
+        return token
+
+def decrypt_token(encrypted_token: str) -> str:
+    """Decrypt a token retrieved from the database."""
+    if not cipher_suite:
+        logger.warning("Encryption not initialized, returning token as-is")
+        return encrypted_token
+        
+    try:
+        if not encrypted_token:
+            return encrypted_token
+        # Check if the token is already encrypted
+        if encrypted_token.startswith('gAAAAA'):
+            return cipher_suite.decrypt(encrypted_token.encode()).decode()
+        # If not encrypted (e.g., legacy tokens or dev environment)
+        return encrypted_token
+    except Exception as e:
+        logger.error(f"Error decrypting token, it may not be encrypted: {e}")
+        return encrypted_token
 
 class IntegrationToken(SQLModel, table=True):  # type: ignore[call-arg]
     id: UUID = Field(default_factory=uuid4, primary_key=True, unique=True)
@@ -28,3 +89,11 @@ class IntegrationToken(SQLModel, table=True):  # type: ignore[call-arg]
     email_address: str | None = Field(default=None, nullable=True)
 
     user: "User" = Relationship(back_populates="integrations")
+    
+    def get_token(self) -> str:
+        """Get the decrypted access token."""
+        return decrypt_token(self.access_token)
+    
+    def set_token(self, token: str) -> None:
+        """Set and encrypt the access token."""
+        self.access_token = encrypt_token(token)
