@@ -11,9 +11,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from loguru import logger
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy import update
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+import base64
 from langflow.api.v1.schemas import SimplifiedAPIRequest
 from langflow.services.database.models.user.model import User
 from langflow.services.auth.utils import get_current_active_user
@@ -31,7 +33,7 @@ from langflow.services.database.models.user.crud import create_integration_token
 from langflow.services.database.models.integration_trigger.crud import get_integration_triggers_by_integration
 from langflow.services.database.models.integration_token.crud import get_integration_by_email_address
 from sqlmodel.ext.asyncio.session import AsyncSession
-from langflow.services.deps import get_session
+from langflow.services.deps import get_session, get_telemetry_service
 import base64
 from sqlalchemy import select
 from langflow.helpers.user import get_user_by_flow_id_or_endpoint_name
@@ -54,7 +56,8 @@ SLACK_SCOPES = [
     "im:read",
     "im:write",
     "users:read",
-    "users.profile:read"
+    "users.profile:read",
+    "team:read"
 ]
 if TYPE_CHECKING:
     from langflow.services.settings.service import SettingsService
@@ -259,333 +262,260 @@ async def slack_callback(
         print(f"Exception traceback: {traceback.format_exc()}")
         print("===== END SLACK CALLBACK DEBUG INFO =====\n")
         raise HTTPException(status_code=400, detail=f"Slack OAuth error: {str(e)}")
+
 @router.post("/slack/events")
-async def slack_webhook(
-    request: Request,
-    db: AsyncSession = Depends(get_session)
-):
+async def slack_webhook(request: Request, db: AsyncSession = Depends(get_session)):
     """
-    Handle incoming events from Slack.
+    Handle incoming Slack webhook events.
     """
     try:
-        # Get the raw request body
+        # Get the raw body
         body = await request.body()
-        body_str = body.decode()
+        raw_body = body.decode('utf-8')
         
-        # Parse the request body
-        event_data = json.loads(body_str)
-        print(f"Received Slack event: {event_data}")
+        print("\n===== RECEIVED SLACK WEBHOOK =====")
+        print(f"Raw body: {raw_body}")
+        
+        # Parse the JSON data
+        try:
+            data = json.loads(raw_body)
+            print(f"Parsed webhook data: {json.dumps(data, indent=2)}")
+        except json.JSONDecodeError:
+            print("Error decoding JSON")
+            return {"status": "error", "message": "Invalid JSON"}
         
         # Handle URL verification challenge
-        if event_data.get("type") == "url_verification":
-            return {"challenge": event_data.get("challenge")}
-            
-        # Get event type
-        event_type = event_data.get("type")
-        if event_type != "event_callback":
-            print(f"Ignoring non-event callback: {event_type}")
-            return {"ok": True}
-            
-        # Get the event details
-        event = event_data.get("event", {})
-        event_type = event.get("type")
+        if data.get("type") == "url_verification":
+            challenge = data.get("challenge")
+            print(f"Received URL verification challenge: {challenge}")
+            return {"challenge": challenge}
         
-        # Handle message events
-        if event_type == "message":
-            # Check if this is a bot message or a message changed event
-            if event.get("subtype") in ["bot_message", "message_changed", "message_deleted"]:
-                return {"ok": True}
-                
-            # Process the message
-            await process_user_slack_message(event_data, db)
+        # Handle event callbacks
+        if data.get("type") == "event_callback":
+            print("\n===== PROCESSING EVENT CALLBACK =====")
+            event = data.get("event", {})
+            event_type = event.get("type")
+            print(f"Event type: {event_type}")
+            print(f"Event details: {json.dumps(event, indent=2)}")
             
-        return {"ok": True}
+            # Handle message events
+            if event_type == "message" and "bot_id" not in event:
+                print("\n===== PROCESSING USER MESSAGE =====")
+                # Process the message asynchronously
+                import asyncio
+                asyncio.create_task(process_user_slack_message(data, db))
+            
+        # Always return a 200 OK to acknowledge receipt
+        return {"status": "ok"}
         
-    except json.JSONDecodeError as e:
-        print(f"Error decoding JSON: {str(e)}")
-        raise HTTPException(status_code=400, detail="Invalid JSON")
     except Exception as e:
         print(f"Error in slack_webhook: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        traceback.print_exc()
+        return {"status": "error", "message": str(e)}
 
-async def process_user_slack_message(event_data: dict, db: AsyncSession):
+async def process_user_slack_message(data, db=None):
     """
-    Process a message event from Slack, checking if it matches any user-level event subscriptions.
+    Process a user message from Slack.
     """
-    async with db as session:
-        try:
-            # Get the team_id from the event data
-            team_id = event_data.get("team_id")
-            if not team_id:
-                print("No team_id in event data")
-                return
-            
+    try:
+        print("\n===== PROCESSING USER SLACK MESSAGE =====")
+        team_id = data.get("team_id")
+        print(f"Processing message for team_id: {team_id}")
+        
+        # Create a new database session instead of reusing the one from the webhook handler
+        from langflow.services.deps import get_db_service
+        async with get_db_service().with_session() as new_db:
             # Get all Slack integrations
-            statement = select(IntegrationToken).where(
-                IntegrationToken.service_name == "slack"
-            )
-            results = await session.exec(statement)
-            integrations = results.all()
+            from sqlalchemy import select
             
-            # Filter integrations by team_id in metadata and check for watch_user_events flag
+            statement = select(IntegrationToken).where(IntegrationToken.service_name == "slack")
+            results = await new_db.execute(statement)
+            integrations = results.scalars().all()
+            
+            print(f"Found {len(integrations)} Slack integrations")
+            
             valid_integrations = []
-            for integration_row in integrations:
+            for integration in integrations:
                 try:
-                    # Convert SQLAlchemy Row to dictionary using __dict__ access
-                    integration_dict = {
-                        'id': integration_row.__dict__.get('id'),
-                        'integration_metadata': integration_row.__dict__.get('integration_metadata', {}),
-                        'service_name': integration_row.__dict__.get('service_name'),
-                        'user_id': integration_row.__dict__.get('user_id'),
-                        'access_token': integration_row.__dict__.get('access_token')
-                    }
+                    # Safely access integration fields using getattr
+                    integration_id = getattr(integration, "id", None)
+                    metadata = getattr(integration, "integration_metadata", {}) or {}
+                    service_name = getattr(integration, "service_name", None)
+                    user_id = getattr(integration, "user_id", None)
+                    access_token = getattr(integration, "access_token", None)
                     
-                    # Get metadata and check flags
-                    metadata = integration_dict['integration_metadata'] or {}
-                    integration_id = integration_dict['id']
+                    print(f"Integration ID: {integration_id}")
+                    print(f"Integration metadata: {metadata}")
+                    print(f"Service name: {service_name}")
+                    print(f"User ID: {user_id}")
+                    print(f"Has access token: {access_token is not None}")
+                    
+                    # Check if the integration has the required metadata
                     integration_team_id = metadata.get("team_id")
                     watch_user_events = metadata.get("watch_user_events", False)
                     
-                    print(f"Integration {integration_id}:")
-                    print(f"  Team ID (integration): {integration_team_id}")
-                    print(f"  Team ID (event): {team_id}")
-                    print(f"  Watch user events: {watch_user_events}")
+                    print(f"Integration team_id: {integration_team_id}")
+                    print(f"Watch user events: {watch_user_events}")
                     
-                    # Verify team ID with Slack API
+                    # Check if this integration is for the team that sent the message and is watching user events
+                    if integration_team_id == team_id and watch_user_events:
+                        print(f"Found valid integration: {integration_id}")
+                        valid_integrations.append(integration)
+                except Exception as e:
+                    print(f"Error processing integration: {str(e)}")
+                    traceback.print_exc()
+            
+            print(f"Found {len(valid_integrations)} valid integrations for team_id {team_id}")
+            
+            # Process each valid integration
+            for integration in valid_integrations:
+                try:
+                    # Get the decrypted access token
                     try:
-                        access_token = integration_dict['access_token']
-                        if not access_token:
-                            print(f"No access token for integration {integration_dict['id']}")
-                            continue
-                            
-                        response = requests.get(
-                            "https://slack.com/api/team.info",
-                            headers={"Authorization": f"Bearer {access_token}"}
-                        )
-                        team_data = response.json()
-                        if not team_data.get("ok"):
-                            print(f"Error getting team info: {team_data.get('error')}")
-                            continue
-                            
-                        verified_team_id = team_data.get("team", {}).get("id")
-                        if not verified_team_id:
-                            print("Could not get team ID from Slack API")
-                            continue
-                            
-                        print(f"  Verified team ID: {verified_team_id}")
-                        
-                        if verified_team_id == team_id and watch_user_events:
-                            valid_integrations.append((integration_row, integration_dict))
-                            print(f"  Integration {integration_id} is valid for team {team_id}")
+                        # Try to get the token using the get_token method
+                        decrypted_token = integration.get_token()
+                        print(f"Successfully decrypted token using get_token()")
                     except Exception as e:
-                        print(f"Error verifying team ID: {str(e)}")
-                        continue
-                        
-                except Exception as e:
-                    print(f"Error processing integration {integration_row.__dict__.get('id', 'unknown')}: {str(e)}")
-                    continue
-            
-            if not valid_integrations:
-                print(f"No matching integrations found for team {team_id}")
-                return
-            
-            # Process the event for each valid integration
-            for integration_row, integration_dict in valid_integrations:
-                try:
-                    await process_slack_message(team_id, event_data.get("event", {}))
-                except Exception as e:
-                    print(f"Error processing message for integration {integration_dict['id']}: {str(e)}")
-                    continue
+                        print(f"Error using get_token(): {str(e)}")
+                        # Fall back to manual decryption
+                        from langflow.services.database.models.integration_token.model import decrypt_token
+                        decrypted_token = decrypt_token(integration.access_token)
+                        print(f"Successfully decrypted token using decrypt_token()")
                     
-        except Exception as e:
-            print(f"Error in process_user_slack_message: {str(e)}")
-            await session.rollback()
-        finally:
-            await session.close()
-
-async def process_slack_message(team_id: str, event: Dict):
-    """
-    Process a Slack message event and trigger appropriate flows.
-    """
-    async with get_session() as db:
-        try:
-            # Get the message details
-            channel_id = event.get("channel")
-            message_text = event.get("text", "")
-            thread_ts = event.get("thread_ts")
-            message_ts = event.get("ts")
-            
-            # Find any integration tokens that match this workspace
-            statement = select(IntegrationToken).where(
-                IntegrationToken.service_name == "slack"
-            )
-            results = await db.exec(statement)
-            tokens = results.all()
-            
-            # We need to verify team_id to find the right integration
-            matching_token = None
-            
-            for token_row in tokens:
-                try:
-                    # Convert SQLAlchemy Row to dictionary using __dict__ access
-                    token_dict = {
-                        'id': token_row.__dict__.get('id'),
-                        'integration_metadata': token_row.__dict__.get('integration_metadata', {}),
-                        'service_name': token_row.__dict__.get('service_name'),
-                        'user_id': token_row.__dict__.get('user_id'),
-                        'access_token': token_row.__dict__.get('access_token')
-                    }
-                    
-                    # Get metadata and check flags
-                    metadata = token_dict['integration_metadata'] or {}
-                    integration_id = token_dict['id']
-                    integration_team_id = metadata.get("team_id")
-                    watch_user_events = metadata.get("watch_user_events", False)
-                    
-                    print(f"Integration {integration_id}:")
-                    print(f"  Team ID (integration): {integration_team_id}")
-                    print(f"  Team ID (event): {team_id}")
-                    print(f"  Watch user events: {watch_user_events}")
-                    
-                    # Verify team using Slack API
-                    try:
-                        access_token = token_dict['access_token']
-                        if not access_token:
-                            print(f"No access token for integration {token_dict['id']}")
-                            continue
-                            
-                        response = requests.get(
-                            "https://slack.com/api/team.info",
-                            headers={"Authorization": f"Bearer {access_token}"}
-                        )
-                        team_data = response.json()
-                        if not team_data.get("ok"):
-                            print(f"Error getting team info: {team_data.get('error')}")
-                            continue
-                            
-                        verified_team_id = team_data.get("team", {}).get("id")
-                        if not verified_team_id:
-                            print("Could not get team ID from Slack API")
-                            continue
-                            
-                        print(f"  Verified team ID: {verified_team_id}")
-                        
-                        if verified_team_id == team_id and watch_user_events:
-                            matching_token = token_row
-                            break
-                    except Exception as e:
-                        print(f"Error verifying team ID: {str(e)}")
-                        continue
-                        
-                except Exception as e:
-                    print(f"Error processing integration {token_row.__dict__.get('id', 'unknown')}: {str(e)}")
-                    continue
-            
-            if not matching_token:
-                print(f"No matching Slack integration found for team ID: {team_id}")
-                return
-            
-            # Get triggers configured for this integration
-            matching_token_dict = {
-                'id': matching_token.__dict__.get('id'),
-                'integration_metadata': matching_token.__dict__.get('integration_metadata', {}),
-                'service_name': matching_token.__dict__.get('service_name'),
-                'user_id': matching_token.__dict__.get('user_id'),
-                'access_token': matching_token.__dict__.get('access_token')
-            }
-            triggers = await IntegrationTrigger.get_integration_triggers_by_integration(db, matching_token_dict['id'])
-            
-            if not triggers:
-                print(f"No triggers configured for Slack integration {matching_token_dict['id']}")
-                return
-            
-            # Process for each configured trigger
-            for trigger_dict in triggers:
-                try:
-                    flow_id = trigger_dict['flow_id']
-                    if not flow_id:
-                        print(f"Trigger {trigger_dict['id']} has no flow_id")
-                        continue
-                    
-                    # Check if flow exists
-                    flow = await get_flow_by_id_or_endpoint_name(flow_id_or_name=str(flow_id))
-                    if not flow:
-                        print(f"Flow {flow_id} not found")
-                        continue
-                    
-                    # Create or get thread session
-                    thread_id = thread_ts or message_ts  # If not in a thread, use the message ts as thread id
-                    session_id = str(uuid4())  # Create a new session ID for each flow run
-                    
-                    # Prepare session
-                    session_service = get_session_service()
-                    if hasattr(session_service, "set_session"):
-                        await session_service.set_session(
-                            session_id=session_id,
-                            chat_data={
-                                "flow_id": str(flow_id),
-                                "messages": [],
-                                "chat_history": []
-                            }
-                        )
+                    # Validate the token format
+                    if decrypted_token and (decrypted_token.startswith("xoxp-") or decrypted_token.startswith("xoxb-")):
+                        print(f"Token validation passed")
+                        # Process the message with the valid integration
+                        event = data.get("event", {})
+                        await process_slack_message(event, integration, decrypted_token, new_db)
                     else:
-                        # Fallback: initialize a sessions dictionary if it doesn't exist
-                        if not hasattr(session_service, "sessions"):
-                            session_service.sessions = {}
-                        session_service.sessions[session_id] = {
-                            "flow_id": str(flow_id),
-                            "messages": [],
-                            "chat_history": []
-                        }
-                    
-                    # Trigger the flow with the message content
-                    request_data = SimplifiedAPIRequest(
-                        message=message_text,
-                        flow_id=str(flow_id),
-                        session_id=session_id,
-                        from_slack=True
+                        print(f"Invalid token format: {decrypted_token[:5]}... (token doesn't start with xoxp- or xoxb-)")
+                except Exception as e:
+                    print(f"Error processing integration {getattr(integration, 'id', 'unknown')}: {str(e)}")
+                    traceback.print_exc()
+    except Exception as e:
+        print(f"Error in process_user_slack_message: {str(e)}")
+        traceback.print_exc()
+
+async def process_slack_message(
+    event: Dict,
+    integration: IntegrationToken,
+    decrypted_token: str,
+    db: AsyncSession
+):
+    """
+    Process a Slack message and trigger any associated flows.
+    """
+    try:
+        print("\n===== PROCESSING SLACK MESSAGE =====")
+        
+        # Extract message details
+        channel = event.get("channel")
+        text = event.get("text", "")
+        user = event.get("user")
+        
+        print(f"Channel: {channel}")
+        print(f"Text: {text}")
+        print(f"User: {user}")
+        
+        # Get the integration ID
+        integration_id = getattr(integration, "id", None)
+        if not integration_id:
+            print("No integration ID found")
+            return
+        
+        print(f"Processing for integration ID: {integration_id}")
+        
+        # Get triggers for this integration
+        from langflow.services.database.models.integration_trigger.model import IntegrationTrigger
+        from sqlalchemy import select
+        
+        statement = select(IntegrationTrigger).where(
+            IntegrationTrigger.integration_id == integration_id
+        )
+        results = await db.execute(statement)
+        triggers = results.scalars().all()
+        
+        print(f"Found {len(triggers)} triggers for integration {integration_id}")
+        
+        # Process each trigger
+        for trigger in triggers:
+            try:
+                trigger_id = getattr(trigger, "id", None)
+                flow_id = getattr(trigger, "flow_id", None)
+                
+                print(f"Processing trigger: {trigger_id} for flow: {flow_id}")
+                
+                # Get the flow from the database
+                from langflow.helpers.flow import get_flow_by_id_or_endpoint_name
+                from langflow.api.v1.schemas import SimplifiedAPIRequest
+                
+                # Get the flow by ID
+                flow = await get_flow_by_id_or_endpoint_name(flow_id_or_name=str(flow_id))
+                if not flow:
+                    print(f"Flow {flow_id} not found")
+                    continue
+                
+                # Create a simplified API request with the message text as input
+                input_request = SimplifiedAPIRequest(
+                    input_value="New Slack message received. Here is the message content:\n\n" + text,
+                    input_type="chat",
+                    output_type="chat"
+                )
+                
+                # Execute the flow
+                print(f"Executing flow {flow_id} with input: {text}")
+                try:
+                    # Use the simple_run_flow function to execute the flow
+                    from langflow.api.v1.endpoints import simple_run_flow
+                    response = await simple_run_flow(
+                        flow=flow,
+                        input_request=input_request,
+                        stream=False
                     )
                     
-                    # Run the flow
-                    try:
-                        response = await simple_run_flow(request_data)
-                        reply = response.get("response", "No response from flow")
-                        
-                        # Prepare thread parameters if this is a reply to a thread
-                        thread_params = {"thread_ts": thread_ts} if thread_ts else {}
-                        
-                        # Send the response back to Slack
-                        try:
-                            # Send message to Slack
-                            slack_response = requests.post(
-                                "https://slack.com/api/chat.postMessage",
-                                headers={"Authorization": f"Bearer {matching_token_dict['access_token']}"},
-                                json={
-                                    "channel": channel_id,
-                                    "text": reply,
-                                    **thread_params
-                                }
-                            )
-                            
-                            if not slack_response.json().get("ok"):
-                                print(f"Error sending message to Slack: {slack_response.json().get('error')}")
-                                
-                        except Exception as slack_error:
-                            print(f"Error sending response to Slack: {str(slack_error)}")
-                            
-                    except Exception as flow_error:
-                        print(f"Error running flow: {str(flow_error)}")
-                        
-                except Exception as e:
-                    print(f"Error processing trigger {trigger_dict.get('id', 'unknown')}: {str(e)}")
-                    continue
+                    print(f"Flow execution completed: {response}")
                     
-        except Exception as e:
-            print(f"Error in process_slack_message: {str(e)}")
-            await db.rollback()
-            raise
-        finally:
-            await db.close()
+                    # Extract the response from the flow execution
+                    flow_response = None
+                    if response and response.outputs and len(response.outputs) > 0:
+                        # Get the first output
+                        first_output = response.outputs[0]
+                        # If there's a value, use it as the response
+                        if first_output and len(first_output) > 0 and "value" in first_output[0]:
+                            flow_response = first_output[0]["value"]
+                    
+                    # Send the response back to Slack
+                    if flow_response:
+                        print(f"Sending response to Slack: {flow_response}")
+                        
+                        # Use the Slack API to send a message back to the channel
+                        import requests
+                        slack_response = requests.post(
+                            "https://slack.com/api/chat.postMessage",
+                            headers={"Authorization": f"Bearer {decrypted_token}"},
+                            json={
+                                "channel": channel,
+                                "text": str(flow_response),
+                                "thread_ts": event.get("thread_ts") or event.get("ts")
+                            }
+                        )
+                        
+                        print(f"Slack API response: {slack_response.status_code} {slack_response.text}")
+                    else:
+                        print("No response to send back to Slack")
+                
+                except Exception as e:
+                    print(f"Error executing flow {flow_id}: {str(e)}")
+                    traceback.print_exc()
+            
+            except Exception as e:
+                print(f"Error processing trigger {trigger_id}: {str(e)}")
+                traceback.print_exc()
+                
+    except Exception as e:
+        print(f"Error in process_slack_message: {str(e)}")
+        traceback.print_exc()
 
 async def trigger_flow_for_slack(
     flow_id: UUID, 
@@ -600,17 +530,15 @@ async def trigger_flow_for_slack(
     """
     async with db as session:
         try:
+            telemetry_service = get_telemetry_service()
             # Convert token to dict for safe field access
             token_dict = {
-                'id': token.__dict__.get('id'),
-                'integration_metadata': token.__dict__.get('integration_metadata', {}),
-                'service_name': token.__dict__.get('service_name'),
-                'user_id': token.__dict__.get('user_id'),
-                'access_token': token.__dict__.get('access_token')
+                'id': token.id,
+                'integration_metadata': token.integration_metadata,
+                'service_name': token.service_name,
+                'user_id': token.user_id,
+                'access_token': token.access_token
             }
-            
-            # Get access token
-            access_token = token_dict['access_token']
             
             # Prepare the request data
             request_data = SimplifiedAPIRequest(
@@ -623,33 +551,28 @@ async def trigger_flow_for_slack(
             # Run the flow
             try:
                 response = await simple_run_flow(request_data)
-                reply = response.get("response", "No response from flow")
-                
-                # Prepare thread parameters if this is a reply to a thread
-                thread_params = {"thread_ts": thread_ts} if thread_ts else {}
-                
-                # Send the response back to Slack
-                try:
-                    # Send message to Slack
-                    slack_response = requests.post(
-                        "https://slack.com/api/chat.postMessage",
-                        headers={"Authorization": f"Bearer {access_token}"},
-                        json={
-                            "channel": channel_id,
-                            "text": reply,
-                            **thread_params
-                        }
+
+                end_time = time.perf_counter()  
+                await telemetry_service.log_package_run(    
+                    RunPayload(
+                        run_is_webhook=True,
+                        run_seconds=int(end_time - start_time),
+                        run_success=True,
+                        run_error_message=""
                     )
-                    
-                    if not slack_response.json().get("ok"):
-                        print(f"Error sending message to Slack: {slack_response.json().get('error')}")
-                        
-                except Exception as slack_error:
-                    print(f"Error sending response to Slack: {str(slack_error)}")
-                    
+                )
+
+                return response
             except Exception as flow_error:
-                print(f"Error running flow: {str(flow_error)}")
-                # Optionally send error message to Slack
+                await telemetry_service.log_package_run(
+                RunPayload(
+                    run_is_webhook=True,
+                    run_seconds=int(time.perf_counter() - start_time),
+                    run_success=False,
+                    run_error_message=str(e)
+                )
+            )
+            raise
                 
         except Exception as e:
             print(f"Error in trigger_flow_for_slack: {str(e)}")
@@ -672,15 +595,15 @@ class IntegrationTrigger:
                 results = await session.exec(statement)
                 triggers = results.all()
                 
-                # Convert SQLAlchemy rows to dictionaries using __dict__ access
+                # Convert SQLAlchemy rows to dictionaries using getattr
                 trigger_dicts = []
                 for trigger in triggers:
                     trigger_dict = {
-                        'id': trigger.__dict__.get('id'),
-                        'flow_id': trigger.__dict__.get('flow_id'),
-                        'integration_id': trigger.__dict__.get('integration_id'),
-                        'trigger_type': trigger.__dict__.get('trigger_type'),
-                        'trigger_metadata': trigger.__dict__.get('trigger_metadata', {})
+                        'id': getattr(trigger, 'id', None),
+                        'flow_id': getattr(trigger, 'flow_id', None),
+                        'integration_id': getattr(trigger, 'integration_id', None),
+                        'trigger_type': getattr(trigger, 'trigger_type', None),
+                        'trigger_metadata': getattr(trigger, 'trigger_metadata', {})
                     }
                     trigger_dicts.append(trigger_dict)
                 
@@ -702,82 +625,80 @@ async def watch_slack(
     """
     Enable watching user-level events for a Slack integration.
     """
-    async with db as session:
-        try:
-            # Get the integration
-            statement = select(IntegrationToken).where(
-                IntegrationToken.id == integration_id,
-                IntegrationToken.service_name == "slack"
-            )
-            result = await session.exec(statement)
-            integration = result.first()
-            
-            if not integration:
-                raise HTTPException(status_code=404, detail="Integration not found")
-            
-            # Convert to dict for safe field access
-            integration_dict = {
-                'id': integration.__dict__.get('id'),
-                'integration_metadata': integration.__dict__.get('integration_metadata', {}),
-                'service_name': integration.__dict__.get('service_name'),
-                'user_id': integration.__dict__.get('user_id'),
-                'access_token': integration.__dict__.get('access_token')
-            }
-            
-            # Get access token
-            access_token = integration_dict['access_token']
-            if not access_token:
-                raise HTTPException(status_code=500, detail="Invalid access token")
-            
-            # Get team info from Slack API
+    # Fetch integration token from DB and ensure it belongs to the authenticated user
+    integration = await get_integration_token_by_id(db=db, token_id=integration_id)
+    if not integration or integration.service_name != "slack" or integration.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Slack integration not found or unauthorized")
+    
+    try:
+        # Get access token directly from the integration object and decrypt it
+        encrypted_token = integration.access_token
+        if not encrypted_token:
+            raise HTTPException(status_code=500, detail="Invalid access token")
+        
+        # Decrypt the token using the get_token method from the model
+        decrypted_token = integration.get_token()
+        
+        # Fallback to manual decryption if the get_token method doesn't work
+        if not decrypted_token or not (decrypted_token.startswith('xoxp-') or decrypted_token.startswith('xoxb-')):
             try:
-                response = requests.get(
-                    "https://slack.com/api/team.info",
-                    headers={"Authorization": f"Bearer {access_token}"}
-                )
-                team_data = response.json()
-                if not team_data.get("ok"):
-                    print(f"Error getting team info: {team_data.get('error')}")
-                    raise HTTPException(status_code=500, detail="Error getting team info from Slack")
-                
-                team_id = team_data.get("team", {}).get("id")
-                if not team_id:
-                    raise HTTPException(status_code=500, detail="Could not get team ID from Slack")
-                
-                # Update metadata to enable user event watching
-                metadata = integration_dict['integration_metadata'] or {}
-                metadata.update({
-                    "team_id": team_id,
-                    "watch_user_events": True,
-                    "updated_at": datetime.now(timezone.utc).isoformat()
-                })
-                
-                # Update the integration
-                integration.integration_metadata = metadata
-                await session.commit()
-                
-                return {
-                    "status": "success",
-                    "message": "User event watching enabled",
-                    "team_id": team_id
-                }
-                
-            except requests.RequestException as e:
-                print(f"Error making request to Slack API: {str(e)}")
-                if hasattr(e, 'response') and e.response is not None:
-                    print(f"Response status code: {e.response.status_code}")
-                    print(f"Response content: {e.response.text}")
-                
-                raise HTTPException(status_code=500, detail="Error communicating with Slack")
-            
-        except HTTPException:
-            raise
-        except Exception as e:
-            print(f"Error in watch_slack: {str(e)}")
-            await session.rollback()
-            raise HTTPException(status_code=500, detail="Internal server error")
-        finally:
-            await session.close()
+                from langflow.services.database.models.integration_token.model import decrypt_token
+                decrypted_token = decrypt_token(encrypted_token)
+                print("Token manually decrypted")
+            except Exception as e:
+                print(f"Error decrypting token: {str(e)}")
+                # If all decryption methods fail, we'll use the original token
+                decrypted_token = encrypted_token
+        
+        # Get team info from Slack API
+        response = requests.get(
+            "https://slack.com/api/team.info",
+            headers={"Authorization": f"Bearer {decrypted_token}"}
+        )
+        team_data = response.json()
+        if not team_data.get("ok"):
+            print(f"Error getting team info: {team_data.get('error')}")
+            raise HTTPException(status_code=500, detail="Error getting team info from Slack")
+        
+        team_id = team_data.get("team", {}).get("id")
+        if not team_id:
+            raise HTTPException(status_code=500, detail="Could not get team ID from Slack")
+        
+        # Get current metadata
+        current_metadata = integration.integration_metadata or {}
+        if not isinstance(current_metadata, dict):
+            current_metadata = {}
+        
+        # Update with new values
+        current_metadata.update({
+            "team_id": team_id,
+            "watch_user_events": True,
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        })
+
+        print("Current metadata:", current_metadata)        
+
+        # Update the integration directly
+        integration.integration_metadata = current_metadata
+        integration.updated_at = datetime.now(timezone.utc)
+        await update_integration_token(db=db, token_id=integration_id, token=integration)
+        
+        return {
+            "status": "success",
+            "message": "User event watching enabled",
+            "team_id": team_id,
+            "metadata": current_metadata
+        }
+    
+    except requests.RequestException as e:
+        print(f"Error making request to Slack API: {str(e)}")
+        if hasattr(e, 'response') and e.response is not None:
+            print(f"Response status code: {e.response.status_code}")
+            print(f"Response content: {e.response.text}")
+        raise HTTPException(status_code=500, detail="Error communicating with Slack")
+    except Exception as e:
+        print(f"Error in watch_slack: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error updating integration: " + str(e))
 
 @router.post("/slack/unwatch/{integration_id}")
 async def unwatch_slack(
@@ -788,191 +709,136 @@ async def unwatch_slack(
     """
     Disable watching user-level events for a Slack integration.
     """
-    async with db as session:
-        try:
-            # Get the integration
-            statement = select(IntegrationToken).where(
-                IntegrationToken.id == integration_id,
-                IntegrationToken.service_name == "slack"
-            )
-            result = await session.exec(statement)
-            integration = result.first()
-            
-            if not integration:
-                raise HTTPException(status_code=404, detail="Integration not found")
-            
-            # Convert to dict for safe field access
-            integration_dict = {
-                'id': integration.__dict__.get('id'),
-                'integration_metadata': integration.__dict__.get('integration_metadata', {}),
-                'service_name': integration.__dict__.get('service_name'),
-                'user_id': integration.__dict__.get('user_id'),
-                'access_token': integration.__dict__.get('access_token')
-            }
-            
-            # Update metadata to disable user event watching
-            metadata = integration_dict['integration_metadata'] or {}
-            metadata.update({
-                "watch_user_events": False,
-                "updated_at": datetime.now(timezone.utc).isoformat()
-            })
-            
-            # Update the integration
-            integration.integration_metadata = metadata
-            await session.commit()
-            
-            return {
-                "status": "success",
-                "message": "User event watching disabled"
-            }
-            
-        except HTTPException:
-            raise
-        except Exception as e:
-            print(f"Error in unwatch_slack: {str(e)}")
-            await session.rollback()
-            raise HTTPException(status_code=500, detail="Internal server error")
-        finally:
-            await session.close()
+    # Fetch integration token from DB and ensure it belongs to the authenticated user
+    integration = await get_integration_token_by_id(db=db, token_id=integration_id)
+    if not integration or integration.service_name != "slack" or integration.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Slack integration not found or unauthorized")
+    
+    try:
+        # Update metadata to disable user event watching
+        metadata = integration.integration_metadata or {}
+        metadata.update({
+            "watch_user_events": False,
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        })
+        
+        # Update the integration directly
+        integration.integration_metadata = metadata
+        integration.updated_at = datetime.now(timezone.utc)
+        await update_integration_token(db=db, token_id=integration_id, token=integration)
+        
+        return {
+            "status": "success",
+            "message": "User event watching disabled"
+        }
+    except Exception as e:
+        print(f"Error in unwatch_slack: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error updating integration: " + str(e))
 
 @router.post("/slack/subscription/{integration_id}")
 async def create_slack_subscription(
     integration_id: UUID,
-    current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_session)
+    db: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_active_user)
 ):
     """
-    Create or update a Slack subscription for the given integration.
+    Create a subscription for a Slack integration.
     """
-    async with db as session:
-        try:
-            # Get the integration
-            statement = select(IntegrationToken).where(
-                IntegrationToken.id == integration_id,
-                IntegrationToken.service_name == "slack"
-            )
-            result = await session.exec(statement)
-            integration = result.first()
-            
-            if not integration:
-                raise HTTPException(status_code=404, detail="Integration not found")
-            
-            # Convert to dict for safe field access
-            integration_dict = {
-                'id': integration.__dict__.get('id'),
-                'integration_metadata': integration.__dict__.get('integration_metadata', {}),
-                'service_name': integration.__dict__.get('service_name'),
-                'user_id': integration.__dict__.get('user_id'),
-                'access_token': integration.__dict__.get('access_token')
-            }
-            
-            # Get access token
-            access_token = integration_dict['access_token']
-            if not access_token:
-                raise HTTPException(status_code=500, detail="Invalid access token")
-            
-            # Get team info from Slack API
+    # Fetch integration token from DB and ensure it belongs to the authenticated user
+    integration = await get_integration_token_by_id(db=db, token_id=integration_id)
+    if not integration or integration.service_name != "slack" or integration.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Slack integration not found or unauthorized")
+    
+    try:
+        # Get access token directly from the integration object and decrypt it
+        encrypted_token = integration.access_token
+        if not encrypted_token:
+            raise HTTPException(status_code=500, detail="Invalid access token")
+        
+        # Decrypt the token using the get_token method from the model
+        decrypted_token = integration.get_token()
+        
+        # Fallback to manual decryption if the get_token method doesn't work
+        if not decrypted_token or not (decrypted_token.startswith('xoxp-') or decrypted_token.startswith('xoxb-')):
             try:
-                response = requests.get(
-                    "https://slack.com/api/team.info",
-                    headers={"Authorization": f"Bearer {access_token}"}
-                )
-                team_data = response.json()
-                if not team_data.get("ok"):
-                    print(f"Error getting team info: {team_data.get('error')}")
-                    raise HTTPException(status_code=500, detail="Error getting team info from Slack")
-                
-                team_id = team_data.get("team", {}).get("id")
-                if not team_id:
-                    raise HTTPException(status_code=500, detail="Could not get team ID from Slack")
-                
-                # Update metadata with subscription info
-                metadata = integration_dict['integration_metadata'] or {}
-                metadata.update({
-                    "team_id": team_id,
-                    "subscription_active": True,
-                    "updated_at": datetime.now(timezone.utc).isoformat()
-                })
-                
-                # Update the integration
-                integration.integration_metadata = metadata
-                await session.commit()
-                
-                return {
-                    "status": "success",
-                    "message": "Subscription created/updated",
-                    "team_id": team_id
-                }
-                
-            except requests.RequestException as e:
-                print(f"Error making request to Slack API: {str(e)}")
-                if hasattr(e, 'response') and e.response is not None:
-                    print(f"Response status code: {e.response.status_code}")
-                    print(f"Response content: {e.response.text}")
-                
-                raise HTTPException(status_code=500, detail="Error communicating with Slack")
-            
-        except HTTPException:
-            raise
-        except Exception as e:
-            print(f"Error in create_slack_subscription: {str(e)}")
-            await session.rollback()
-            raise HTTPException(status_code=500, detail="Internal server error")
-        finally:
-            await session.close()
+                from langflow.services.database.models.integration_token.model import decrypt_token
+                decrypted_token = decrypt_token(encrypted_token)
+                print("Token manually decrypted")
+            except Exception as e:
+                print(f"Error decrypting token: {str(e)}")
+                # If all decryption methods fail, we'll use the original token
+                decrypted_token = encrypted_token
+        
+        # Get team info from Slack API
+        response = requests.get(
+            "https://slack.com/api/team.info",
+            headers={"Authorization": f"Bearer {decrypted_token}"}
+        )
+        team_data = response.json()
+        if not team_data.get("ok"):
+            print(f"Error getting team info: {team_data.get('error')}")
+            raise HTTPException(status_code=500, detail="Error getting team info from Slack")
+        
+        team_id = team_data.get("team", {}).get("id")
+        if not team_id:
+            raise HTTPException(status_code=500, detail="Could not get team ID from Slack")
+        
+        # Update metadata with subscription info
+        metadata = integration.integration_metadata or {}
+        metadata.update({
+            "team_id": team_id,
+            "subscription_active": True,
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        })
+        
+        # Update the integration directly
+        integration.integration_metadata = metadata
+        integration.updated_at = datetime.now(timezone.utc)
+        await update_integration_token(db=db, token_id=integration_id, token=integration)
+        
+        return {
+            "status": "success",
+            "message": "Subscription created",
+            "team_id": team_id
+        }
+        
+    except requests.RequestException as e:
+        print(f"Error making request to Slack API: {str(e)}")
+        if hasattr(e, 'response') and e.response is not None:
+            print(f"Response status code: {e.response.status_code}")
+            print(f"Response content: {e.response.text}")
+        raise HTTPException(status_code=500, detail="Error communicating with Slack")
+    except Exception as e:
+        print(f"Error in create_slack_subscription: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error updating integration: " + str(e))
 
 @router.get("/slack/subscription/{integration_id}")
 async def get_slack_subscription(
     integration_id: UUID,
-    current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_session)
+    db: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_active_user)
 ):
     """
-    Get the Slack subscription for the given integration.
+    Get subscription status for a Slack integration.
     """
-    async with db as session:
-        try:
-            # Get the integration
-            statement = select(IntegrationToken).where(
-                IntegrationToken.id == integration_id,
-                IntegrationToken.service_name == "slack"
-            )
-            result = await session.exec(statement)
-            integration = result.first()
-            
-            if not integration:
-                raise HTTPException(status_code=404, detail="Integration not found")
-            
-            # Convert to dict for safe field access
-            integration_dict = {
-                'id': integration.__dict__.get('id'),
-                'integration_metadata': integration.__dict__.get('integration_metadata', {}),
-                'service_name': integration.__dict__.get('service_name'),
-                'user_id': integration.__dict__.get('user_id'),
-                'access_token': integration.__dict__.get('access_token')
-            }
-            
-            # Get metadata
-            metadata = integration_dict['integration_metadata'] or {}
-            
-            return {
-                "status": "success",
-                "subscription": {
-                    "active": metadata.get("subscription_active", False),
-                    "team_id": metadata.get("team_id"),
-                    "team_name": metadata.get("team_name"),
-                    "updated_at": metadata.get("updated_at")
-                }
-            }
-            
-        except HTTPException:
-            raise
-        except Exception as e:
-            print(f"Error in get_slack_subscription: {str(e)}")
-            await session.rollback()
-            raise HTTPException(status_code=500, detail="Internal server error")
-        finally:
-            await session.close()
+    # Fetch integration token from DB and ensure it belongs to the authenticated user
+    integration = await get_integration_token_by_id(db=db, token_id=integration_id)
+    if not integration or integration.service_name != "slack" or integration.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Slack integration not found or unauthorized")
+    
+    try:
+        # Get metadata
+        metadata = integration.integration_metadata or {}
+        
+        return {
+            "status": "success",
+            "subscription_active": metadata.get("subscription_active", False),
+            "team_id": metadata.get("team_id", ""),
+            "metadata": metadata
+        }
+    except Exception as e:
+        print(f"Error in get_slack_subscription: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error getting subscription: " + str(e))
 
 @router.get("/encryption-key/status", dependencies=[Depends(get_current_active_user)])
 async def check_encryption_key():
