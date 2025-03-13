@@ -102,21 +102,44 @@ class SlackRetrieveMessagesComponent(LCToolComponent):
         thread_ts = thread_ts or None
         user_filter = user_filter or None
 
-        # Convert user_id to UUID
-        try:
-            user_id_uuid = UUID(self.user_id)
-        except ValueError:
-            return [Data(content=f"Invalid user ID: {user_id}")]
+        # First, try to use the user_id parameter if provided
+        user_id_to_use = user_id or self.user_id
+        
+        # Initialize user_id_uuid as None
+        user_id_uuid = None
+        
+        # Try to convert the user_id to UUID if it looks like a UUID
+        if user_id_to_use:
+            try:
+                # Only try to convert to UUID if it looks like one
+                if '-' in user_id_to_use and len(user_id_to_use) > 30:
+                    user_id_uuid = UUID(user_id_to_use)
+                    logger.info(f"Successfully converted user_id to UUID: {user_id_uuid}")
+            except ValueError:
+                logger.warning(f"Couldn't convert user_id to UUID: {user_id_to_use}")
+                # Continue without a UUID - we'll handle this case below
 
         engine = create_engine("sqlite:///src/backend/base/langflow/langflow.db")
         SQLModel.metadata.create_all(engine)
 
         try:
             with Session(engine) as db:
-                # Retrieve Slack token for the user
-                tokens = db.exec(
-                    select(IntegrationToken).where(IntegrationToken.user_id == user_id_uuid)
-                ).all()
+                # Query for integration tokens with service_name 'slack'
+                # If we have a valid UUID, filter by user_id, otherwise get all Slack tokens
+                if user_id_uuid:
+                    logger.info(f"Querying for Slack tokens with user_id: {user_id_uuid}")
+                    tokens = db.exec(
+                        select(IntegrationToken).where(
+                            (IntegrationToken.user_id == user_id_uuid) & 
+                            (IntegrationToken.service_name == "slack")
+                        )
+                    ).all()
+                else:
+                    # If we don't have a UUID, just get all Slack tokens
+                    logger.info("Querying for all Slack tokens")
+                    tokens = db.exec(
+                        select(IntegrationToken).where(IntegrationToken.service_name == "slack")
+                    ).all()
 
                 if not tokens:
                     return [Data(content="No token found for this user.")]

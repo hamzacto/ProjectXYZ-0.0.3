@@ -41,6 +41,10 @@ from redis import asyncio as aioredis
 from langflow.api.v1.endpoints import simple_run_flow
 from typing import TYPE_CHECKING, Dict, Optional
 from dotenv import load_dotenv
+from langflow.services.deps import get_telemetry_service
+import time
+from langflow.services.telemetry.schema import RunPayload
+
 router = APIRouter(tags=["Slack Integrations"])
 
 # Slack API configuration
@@ -406,7 +410,9 @@ async def process_slack_message(
     """
     Process a Slack message and trigger any associated flows.
     """
+    start_time = time.perf_counter()
     try:
+        telemetry_service = get_telemetry_service()
         print("\n===== PROCESSING SLACK MESSAGE =====")
         
         # Extract message details
@@ -456,9 +462,32 @@ async def process_slack_message(
                     print(f"Flow {flow_id} not found")
                     continue
                 
-                # Create a simplified API request with the message text as input
+                # Create a structured JSON with event, message content, and metadata
+                import json
+                from uuid import UUID
+                
+                input_data = {
+                    "event": "New Slack Message Received",
+                    "message": {
+                        "content": text,
+                        "metadata": {
+                            "channel": channel,
+                            "sender_id": user,
+                            "timestamp": event.get("ts"),
+                            "thread": event.get("thread_ts") or "Not in a thread",
+                            "team_id": event.get("team") or getattr(integration, "team_id", None)
+                        }
+                    }
+                }
+                
+                # Convert to JSON string for the SimplifiedAPIRequest
+                # Add a default serializer function to handle UUID objects
+                input_value_str = json.dumps(input_data, default=lambda o: str(o) if isinstance(o, UUID) else None)
+                
+                print(f"Sending input to flow: {input_value_str[:100]}...")
+                
                 input_request = SimplifiedAPIRequest(
-                    input_value="New Slack message received. Here is the message content:\n\n" + text,
+                    input_value=input_value_str,
                     input_type="chat",
                     output_type="chat"
                 )
@@ -473,38 +502,19 @@ async def process_slack_message(
                         input_request=input_request,
                         stream=False
                     )
+
+                    end_time = time.perf_counter()
+                    await telemetry_service.log_package_run(
+                        RunPayload(
+                            run_is_webhook=True,
+                            run_seconds=int(end_time - start_time),
+                            run_success=True,
+                            run_error_message=""
+                        )
+                    )
                     
                     print(f"Flow execution completed: {response}")
                     
-                    # Extract the response from the flow execution
-                    flow_response = None
-                    if response and response.outputs and len(response.outputs) > 0:
-                        # Get the first output
-                        first_output = response.outputs[0]
-                        # If there's a value, use it as the response
-                        if first_output and len(first_output) > 0 and "value" in first_output[0]:
-                            flow_response = first_output[0]["value"]
-                    
-                    # Send the response back to Slack
-                    if flow_response:
-                        print(f"Sending response to Slack: {flow_response}")
-                        
-                        # Use the Slack API to send a message back to the channel
-                        import requests
-                        slack_response = requests.post(
-                            "https://slack.com/api/chat.postMessage",
-                            headers={"Authorization": f"Bearer {decrypted_token}"},
-                            json={
-                                "channel": channel,
-                                "text": str(flow_response),
-                                "thread_ts": event.get("thread_ts") or event.get("ts")
-                            }
-                        )
-                        
-                        print(f"Slack API response: {slack_response.status_code} {slack_response.text}")
-                    else:
-                        print("No response to send back to Slack")
-                
                 except Exception as e:
                     print(f"Error executing flow {flow_id}: {str(e)}")
                     traceback.print_exc()
@@ -517,104 +527,6 @@ async def process_slack_message(
         print(f"Error in process_slack_message: {str(e)}")
         traceback.print_exc()
 
-async def trigger_flow_for_slack(
-    flow_id: UUID, 
-    message: str, 
-    channel_id: str,
-    thread_ts: Optional[str],
-    db: AsyncSession,
-    token: IntegrationToken
-):
-    """
-    Trigger a flow based on a Slack message and send the response back to Slack.
-    """
-    async with db as session:
-        try:
-            telemetry_service = get_telemetry_service()
-            # Convert token to dict for safe field access
-            token_dict = {
-                'id': token.id,
-                'integration_metadata': token.integration_metadata,
-                'service_name': token.service_name,
-                'user_id': token.user_id,
-                'access_token': token.access_token
-            }
-            
-            # Prepare the request data
-            request_data = SimplifiedAPIRequest(
-                message=message,
-                flow_id=str(flow_id),
-                session_id=None,  # Let the system generate one
-                from_slack=True
-            )
-            
-            # Run the flow
-            try:
-                response = await simple_run_flow(request_data)
-
-                end_time = time.perf_counter()  
-                await telemetry_service.log_package_run(    
-                    RunPayload(
-                        run_is_webhook=True,
-                        run_seconds=int(end_time - start_time),
-                        run_success=True,
-                        run_error_message=""
-                    )
-                )
-
-                return response
-            except Exception as flow_error:
-                await telemetry_service.log_package_run(
-                RunPayload(
-                    run_is_webhook=True,
-                    run_seconds=int(time.perf_counter() - start_time),
-                    run_success=False,
-                    run_error_message=str(e)
-                )
-            )
-            raise
-                
-        except Exception as e:
-            print(f"Error in trigger_flow_for_slack: {str(e)}")
-            await session.rollback()
-            raise
-        finally:
-            await session.close()
-
-class IntegrationTrigger:
-    @staticmethod
-    async def get_integration_triggers_by_integration(
-        db: AsyncSession, integration_id: UUID
-    ) -> List[Dict]:
-        """Get all triggers for a given integration."""
-        try:
-            async with db as session:
-                statement = select(IntegrationTrigger).where(
-                    IntegrationTrigger.integration_id == integration_id
-                )
-                results = await session.exec(statement)
-                triggers = results.all()
-                
-                # Convert SQLAlchemy rows to dictionaries using getattr
-                trigger_dicts = []
-                for trigger in triggers:
-                    trigger_dict = {
-                        'id': getattr(trigger, 'id', None),
-                        'flow_id': getattr(trigger, 'flow_id', None),
-                        'integration_id': getattr(trigger, 'integration_id', None),
-                        'trigger_type': getattr(trigger, 'trigger_type', None),
-                        'trigger_metadata': getattr(trigger, 'trigger_metadata', {})
-                    }
-                    trigger_dicts.append(trigger_dict)
-                
-                return trigger_dicts
-                
-        except SQLAlchemyError as e:
-            print(f"Database error in get_integration_triggers_by_integration: {str(e)}")
-            raise
-        except Exception as e:
-            print(f"Error in get_integration_triggers_by_integration: {str(e)}")
-            raise
 
 @router.post("/slack/watch/{integration_id}")
 async def watch_slack(
@@ -734,111 +646,6 @@ async def unwatch_slack(
     except Exception as e:
         print(f"Error in unwatch_slack: {str(e)}")
         raise HTTPException(status_code=500, detail="Error updating integration: " + str(e))
-
-@router.post("/slack/subscription/{integration_id}")
-async def create_slack_subscription(
-    integration_id: UUID,
-    db: AsyncSession = Depends(get_session),
-    current_user: User = Depends(get_current_active_user)
-):
-    """
-    Create a subscription for a Slack integration.
-    """
-    # Fetch integration token from DB and ensure it belongs to the authenticated user
-    integration = await get_integration_token_by_id(db=db, token_id=integration_id)
-    if not integration or integration.service_name != "slack" or integration.user_id != current_user.id:
-        raise HTTPException(status_code=404, detail="Slack integration not found or unauthorized")
-    
-    try:
-        # Get access token directly from the integration object and decrypt it
-        encrypted_token = integration.access_token
-        if not encrypted_token:
-            raise HTTPException(status_code=500, detail="Invalid access token")
-        
-        # Decrypt the token using the get_token method from the model
-        decrypted_token = integration.get_token()
-        
-        # Fallback to manual decryption if the get_token method doesn't work
-        if not decrypted_token or not (decrypted_token.startswith('xoxp-') or decrypted_token.startswith('xoxb-')):
-            try:
-                from langflow.services.database.models.integration_token.model import decrypt_token
-                decrypted_token = decrypt_token(encrypted_token)
-                print("Token manually decrypted")
-            except Exception as e:
-                print(f"Error decrypting token: {str(e)}")
-                # If all decryption methods fail, we'll use the original token
-                decrypted_token = encrypted_token
-        
-        # Get team info from Slack API
-        response = requests.get(
-            "https://slack.com/api/team.info",
-            headers={"Authorization": f"Bearer {decrypted_token}"}
-        )
-        team_data = response.json()
-        if not team_data.get("ok"):
-            print(f"Error getting team info: {team_data.get('error')}")
-            raise HTTPException(status_code=500, detail="Error getting team info from Slack")
-        
-        team_id = team_data.get("team", {}).get("id")
-        if not team_id:
-            raise HTTPException(status_code=500, detail="Could not get team ID from Slack")
-        
-        # Update metadata with subscription info
-        metadata = integration.integration_metadata or {}
-        metadata.update({
-            "team_id": team_id,
-            "subscription_active": True,
-            "updated_at": datetime.now(timezone.utc).isoformat()
-        })
-        
-        # Update the integration directly
-        integration.integration_metadata = metadata
-        integration.updated_at = datetime.now(timezone.utc)
-        await update_integration_token(db=db, token_id=integration_id, token=integration)
-        
-        return {
-            "status": "success",
-            "message": "Subscription created",
-            "team_id": team_id
-        }
-        
-    except requests.RequestException as e:
-        print(f"Error making request to Slack API: {str(e)}")
-        if hasattr(e, 'response') and e.response is not None:
-            print(f"Response status code: {e.response.status_code}")
-            print(f"Response content: {e.response.text}")
-        raise HTTPException(status_code=500, detail="Error communicating with Slack")
-    except Exception as e:
-        print(f"Error in create_slack_subscription: {str(e)}")
-        raise HTTPException(status_code=500, detail="Error updating integration: " + str(e))
-
-@router.get("/slack/subscription/{integration_id}")
-async def get_slack_subscription(
-    integration_id: UUID,
-    db: AsyncSession = Depends(get_session),
-    current_user: User = Depends(get_current_active_user)
-):
-    """
-    Get subscription status for a Slack integration.
-    """
-    # Fetch integration token from DB and ensure it belongs to the authenticated user
-    integration = await get_integration_token_by_id(db=db, token_id=integration_id)
-    if not integration or integration.service_name != "slack" or integration.user_id != current_user.id:
-        raise HTTPException(status_code=404, detail="Slack integration not found or unauthorized")
-    
-    try:
-        # Get metadata
-        metadata = integration.integration_metadata or {}
-        
-        return {
-            "status": "success",
-            "subscription_active": metadata.get("subscription_active", False),
-            "team_id": metadata.get("team_id", ""),
-            "metadata": metadata
-        }
-    except Exception as e:
-        print(f"Error in get_slack_subscription: {str(e)}")
-        raise HTTPException(status_code=500, detail="Error getting subscription: " + str(e))
 
 @router.get("/encryption-key/status", dependencies=[Depends(get_current_active_user)])
 async def check_encryption_key():
