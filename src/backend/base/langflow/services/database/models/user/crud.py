@@ -75,7 +75,8 @@ async def create_integration_token(
     client_id: str | None = None,
     client_secret: str | None = None,
     expires_at: datetime | None = None,
-    email_address: str | None = None
+    email_address: str | None = None,
+    metadata: dict | None = None
 ) -> IntegrationToken:
     # Encrypt the token before storing in database
     encrypted_token = encrypt_token(access_token)
@@ -89,7 +90,8 @@ async def create_integration_token(
         client_id=client_id,
         client_secret=client_secret,
         expires_at=expires_at,
-        email_address=email_address
+        email_address=email_address,
+        metadata=metadata
     )
     db.add(token)
     try:

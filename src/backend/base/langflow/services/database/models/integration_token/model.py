@@ -8,6 +8,7 @@ from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from loguru import logger
+from sqlalchemy import String, DateTime
 
 if TYPE_CHECKING:
     from langflow.services.database.models.user import User
@@ -72,21 +73,24 @@ class IntegrationToken(SQLModel, table=True):  # type: ignore[call-arg]
     user_id: UUID = Field(foreign_key="user.id", index=True)  # Link to User
     service_name: str = Field(index=True)  # e.g., "gmail", "slack"
     access_token: str = Field()  # Store securely in production
-    refresh_token: str | None = Field(default=None, nullable=True)
-    token_uri: str | None = Field(default=None, nullable=True)
-    client_id: str | None = Field(default=None, nullable=True)
-    client_secret: str | None = Field(default=None, nullable=True)
-    expires_at: datetime | None = Field(default=None, nullable=True)  # Token expiration time
+    refresh_token: str | None = Field(default=None, sa_column=Column(String, nullable=True))
+    token_uri: str | None = Field(default=None, sa_column=Column(String, nullable=True))
+    client_id: str | None = Field(default=None, sa_column=Column(String, nullable=True))
+    client_secret: str | None = Field(default=None, sa_column=Column(String, nullable=True))
+    expires_at: datetime | None = Field(default=None, sa_column=Column(DateTime, nullable=True))  # Token expiration time
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     # New fields for Gmail watch:
-    last_history_id: str | None = Field(default=None, nullable=True)
-    channel_id: str | None = Field(default=None, nullable=True)
+    last_history_id: str | None = Field(default=None, sa_column=Column(String, nullable=True))
+    channel_id: str | None = Field(default=None, sa_column=Column(String, nullable=True))
     # Optionally, a field to store the expiration of the watch subscription:
-    watch_expiration: datetime | None = Field(default=None, nullable=True)
+    watch_expiration: datetime | None = Field(default=None, sa_column=Column(DateTime, nullable=True))
 
-    email_address: str | None = Field(default=None, nullable=True)
+    email_address: str | None = Field(default=None, sa_column=Column(String, nullable=True))
+
+    # JSON field to store additional service-specific metadata
+    integration_metadata: dict | None = Field(default=None, sa_column=Column(JSON, nullable=True))
 
     user: "User" = Relationship(back_populates="integrations")
     

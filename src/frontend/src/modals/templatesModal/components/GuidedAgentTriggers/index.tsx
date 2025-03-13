@@ -59,6 +59,7 @@ export default function GuidedAgentTriggers({ onTriggersChange, selectedTriggers
     const [error, setError] = useState<string | null>(null);
     const [successMessage, setSuccessMessage] = useState<string | null>(null);
     const [dialogOpen, setDialogOpen] = useState(false);
+    const [slackDialogOpen, setSlackDialogOpen] = useState(false);
     const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
     const [triggerToDelete, setTriggerToDelete] = useState<string | null>(null);
     const axiosInstance = axios.create({
@@ -94,6 +95,23 @@ export default function GuidedAgentTriggers({ onTriggersChange, selectedTriggers
         }
     };
 
+    const enableSlackWatch = async (integrationId: string) => {
+        try {
+            // First call the watch endpoint to enable user-level events
+            const response = await axiosInstance.post(`/slack/watch/${integrationId}`);
+            if (response.status === 200) {
+                console.log('Slack watch enabled successfully:', response.data);
+                // Then create the trigger
+                await createTrigger(integrationId);
+            } else {
+                throw new Error('Failed to enable Slack watch');
+            }
+        } catch (err) {
+            setError('Failed to enable Slack watch');
+            console.error(err);
+        }
+    };
+
     const handleDeleteTrigger = (integrationId: string) => {
         setTriggerToDelete(integrationId);
         setDeleteDialogOpen(true);
@@ -121,6 +139,16 @@ export default function GuidedAgentTriggers({ onTriggersChange, selectedTriggers
         return integrations.filter(integration =>
             !selectedTriggers.includes(integration.id)
         );
+    };
+
+    const getServiceIcon = (serviceName: string) => {
+        const serviceIcons = {
+            'gmail': 'Gmail',
+            'slack': 'Slack',
+            'whatsapp': 'WhatsApp'
+        };
+        
+        return serviceIcons[serviceName.toLowerCase()] || 'Mail';
     };
 
     const getStatusIcon = (status: string) => {
@@ -196,7 +224,7 @@ export default function GuidedAgentTriggers({ onTriggersChange, selectedTriggers
                                             >
                                                 <div className="flex items-center justify-between p-4 rounded-lg bg-white dark:bg-[#27272a] border border-gray-100 dark:border-gray-700">
                                                     <div className="flex items-center gap-2">
-                                                        <ForwardedIconComponent name="Gmail" className="h-5 w-5 text-gray-600 dark:text-gray-400" />
+                                                        <ForwardedIconComponent name={getServiceIcon(integration.service_name)} className="h-5 w-5 text-gray-600 dark:text-gray-400" />
                                                         {getStatusIcon(integration.status)}
                                                         <span className="text-sm dark:text-gray-300">{integration.email}</span>
                                                     </div>
@@ -260,6 +288,26 @@ export default function GuidedAgentTriggers({ onTriggersChange, selectedTriggers
                                     >
                                         <Plus className="h-4 w-4" />
                                         Add Gmail Trigger
+                                    </Button>
+                                </div>
+
+                                <div className="group rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#27272a] p-6 transition-all duration-200 hover:shadow-sm">
+                                    <div className="flex items-start justify-between mb-4">
+                                        <div>
+                                            <h3 className="text-base font-semibold dark:text-gray-100">Slack</h3>
+                                            <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                                                Connect Slack workspaces to create automated workflows
+                                            </p>
+                                        </div>
+                                        <ForwardedIconComponent name="Slack" className="h-6 w-6 text-gray-600 dark:text-gray-400" />
+                                    </div>
+                                    <Button
+                                        variant="outline"
+                                        className="w-full justify-start gap-2"
+                                        onClick={() => setSlackDialogOpen(true)}
+                                    >
+                                        <Plus className="h-4 w-4" />
+                                        Add Slack Trigger
                                     </Button>
                                 </div>
 
@@ -335,6 +383,64 @@ export default function GuidedAgentTriggers({ onTriggersChange, selectedTriggers
                                                 className="dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-600"
                                             >
                                                 Select Account
+                                            </Button>
+                                        </div>
+                                    </Card>
+                                ))
+                            )}
+                        </div>
+                    </div>
+                </DialogContent>
+            </Dialog>
+
+            <Dialog open={slackDialogOpen} onOpenChange={setSlackDialogOpen}>
+                <DialogContent className="max-w-xl dark:bg-[#27272a] dark:border-gray-700">
+                    <DialogHeader>
+                        <DialogTitle className="dark:text-gray-100">Select Slack Workspace</DialogTitle>
+                        <DialogDescription className="dark:text-gray-400">
+                            Choose a workspace to create a new trigger
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    <div className="max-h-[60vh] overflow-y-auto">
+                        <div className="space-y-4 pr-4">
+                            {getInactiveIntegrations().length === 0 ? (
+                                <Card className="flex items-center justify-center p-4 text-center dark:bg-[#27272a] dark:border-gray-600">
+                                    <div className="space-y-3">
+                                        <Mail className="mx-auto h-12 w-12 text-muted-foreground opacity-50" />
+                                        <p className="text-muted-foreground dark:text-gray-400">No available Slack workspaces</p>
+                                    </div>
+                                </Card>
+                            ) : (
+                                getInactiveIntegrations().map((integration) => (
+                                    <Card key={integration.id} className="p-4 dark:bg-[#27272a] dark:border-gray-600">
+                                        <div className="flex items-start justify-between">
+                                            <div className="space-y-3">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="font-medium dark:text-gray-200">{integration.email}</span>
+                                                </div>
+                                                <div className="flex flex-wrap gap-2">
+                                                    {integration.permissions.map((permission) => (
+                                                        <Badge
+                                                            key={permission}
+                                                            variant="secondary"
+                                                            className="text-xs dark:bg-gray-600 dark:text-gray-300"
+                                                        >
+                                                            {permission}
+                                                        </Badge>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={() => {
+                                                    enableSlackWatch(integration.id);
+                                                    setSlackDialogOpen(false);
+                                                }}
+                                                className="dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-600"
+                                            >
+                                                Select Workspace
                                             </Button>
                                         </div>
                                     </Card>

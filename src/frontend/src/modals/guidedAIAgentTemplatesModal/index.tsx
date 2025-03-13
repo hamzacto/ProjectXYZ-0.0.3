@@ -1097,14 +1097,17 @@ export default function GuidedAIAgentTemplatesModal({
 
             if (tool.display_name === "Gmail Email Loader" 
                 || tool.display_name === "Gmail Email Sender" 
-                || tool.display_name === "Gmail Email Responder" 
+                || tool.display_name === "Gmail Email Responder"
                 || tool.display_name === "Gmail Email Draft Creator"
                 || tool.display_name === "Google Calendar Event Creator"
                 || tool.display_name === "Google Calendar Event Loader"
                 || tool.display_name === "Google Calendar Event Modifier"
                 || tool.display_name === "Google Sheets Data Loader"
                 || tool.display_name === "Google Sheets Data Modifier"
-                || tool.display_name === "Slack Message Sender") {
+                || tool.display_name === "Slack Message Sender"
+                || tool.display_name === "Slack Retrieve Messages"
+                || tool.display_name === "Slack List Channels & Users"
+                || tool.display_name === "Slack DM Sender") {
                 // Get the access token from cookies
                 const token = document.cookie
                     .split('; ')

@@ -14,7 +14,7 @@ from langflow.api.v1.validate import router as validate_router
 from langflow.api.v1.variable import router as variables_router
 from langflow.api.v1.integrations import router as integrations_router
 from langflow.api.v1.vectorstore import router as vectorstore_router
-
+from langflow.api.v1.slack_integrations import router as slack_integrations_router  
 __all__ = [
     "api_key_router",
     "chat_router",
@@ -32,4 +32,5 @@ __all__ = [
     "variables_router",
     "integrations_router",
     "vectorstore_router",
+    "slack_integrations_router",
 ]

@@ -47,6 +47,9 @@ from .google_calendar_modify import GoogleCalendarEventModifierComponent
 from .google_sheets_load import GoogleSheetsDataLoaderComponent
 from .google_sheets_update import GoogleSheetsDataModifierComponent
 from .slack_message_send import SlackMessageSenderComponent
+from .slack_load_messages import SlackRetrieveMessagesComponent
+from .slack_list_channels_users import SlackListChannelsUsersComponent
+from .slack_dm_message import SlackDMSenderComponent
 
 __all__ = [
     "ArXivComponent",
@@ -92,5 +95,8 @@ __all__ = [
     "GoogleCalendarEventLoaderComponent",
     "GoogleCalendarEventModifierComponent",
     "GoogleSheetsDataLoaderComponent",
-    "GoogleSheetsDataModifierComponent"    
+    "GoogleSheetsDataModifierComponent",
+    "SlackRetrieveMessagesComponent",
+    "SlackListChannelsUsersComponent",
+    "SlackDMSenderComponent"   
 ]
