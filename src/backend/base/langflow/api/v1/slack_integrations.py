@@ -187,6 +187,12 @@ async def slack_callback(
         # Extract team information
         team_id = token_data.get("team", {}).get("id")
         team_name = token_data.get("team", {}).get("name")
+        user_display_name = None
+        user_name = token_data.get("user")
+        if token_data.get("ok"):
+            user_profile = token_data.get("user", {}).get("profile", {})
+            user_display_name = user_profile.get("display_name") or user_profile.get("real_name")
+
         print(f"Team ID: {team_id}")
         print(f"Team Name: {team_name}")
         
@@ -196,7 +202,7 @@ async def slack_callback(
             "team_name": team_name,
             "user_id": slack_user_id,
             "watch_user_events": True,  # Default to enabled
-            "updated_at": datetime.now(timezone.utc).isoformat()
+            "updated_at": datetime.now(timezone.utc).isoformat(),
         }
         
         # Store the app's own user ID in the metadata - this is critical for mention detection
@@ -205,6 +211,34 @@ async def slack_callback(
         
         slack_email = None
         bot_user_id = None
+        
+        # First, get user identity from Slack API using auth.test
+        try:
+            print("\n----- GETTING USER IDENTITY FROM SLACK API -----")
+            user_identity_response = requests.get(
+                "https://slack.com/api/auth.test",
+                headers={"Authorization": f"Bearer {user_access_token}"}
+            )
+            user_identity = user_identity_response.json()
+            print(f"User identity response: {user_identity}")
+            
+            if user_identity.get("ok"):
+                user_id = user_identity.get("user_id")
+                user_name = user_identity.get("user")
+                print(f"User ID from auth.test: {user_id}")
+                print(f"User name from auth.test: {user_name}")
+                
+                # Make sure we have the correct user ID
+                if user_id and user_id != slack_user_id:
+                    print(f"Updating user ID from {slack_user_id} to {user_id}")
+                    slack_user_id = user_id
+                    integration_metadata["user_id"] = user_id
+                    integration_metadata["app_user_id"] = user_id
+            else:
+                print(f"⚠️ Error getting user identity: {user_identity.get('error')}")
+        except Exception as e:
+            print(f"⚠️ Error getting user identity: {str(e)}")
+        
         try:
             print("\n----- GETTING SLACK USER INFO -----")
             user_info_response = requests.get(
@@ -221,10 +255,11 @@ async def slack_callback(
                 slack_email = user_info.get("user", {}).get("profile", {}).get("email")
                 print(f"Slack email: {slack_email}")
                 
-                # Add user display name to metadata
-                user_display_name = user_info.get("user", {}).get("profile", {}).get("display_name")
-                user_real_name = user_info.get("user", {}).get("profile", {}).get("real_name")
-                integration_metadata["user_display_name"] = user_display_name or user_real_name
+                # Add user display name to metadata - prioritize display_name, then real_name
+                user_profile = user_info.get("user", {}).get("profile", {})
+                user_display_name = user_profile.get("display_name") or user_profile.get("real_name")
+                integration_metadata["user_display_name"] = user_display_name
+                print(f"User display name: {user_display_name}")
                 
                 # If email is missing, log a warning but continue
                 if not slack_email:
@@ -233,7 +268,7 @@ async def slack_callback(
                 print(f"⚠️ Error getting user info: {user_info.get('error')}")
         except Exception as e:
             print(f"⚠️ Error getting Slack user info: {str(e)}")
-            
+        
         # Get bot user ID if available
         try:
             print("\n----- GETTING BOT INFO -----")

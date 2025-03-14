@@ -12,13 +12,14 @@ import { Card } from '@/components/ui/card';
 import { SlackIcon } from '@/icons/Slack';
 
 interface IntegrationDetails {
+    id: string;
     service_name: string;
     connected: boolean;
     created_at: string;
     updated_at: string;
     expires_at: string | null;
     permissions: string[];
-    email_address: string | null;
+    email: string | null;
     status: 'active' | 'expired' | 'error';
     integration_metadata?: {
         user_display_name?: string;
@@ -182,10 +183,9 @@ export default function SlackIntegrationsDetailPage() {
                                                 <div className="flex items-center gap-2">
                                                     {getStatusIcon(integration.status)}
                                                     <span className="font-medium">
-                                                        {integration.email_address || 
-                                                         (integration.integration_metadata?.user_display_name ? 
-                                                          `${integration.integration_metadata.user_display_name}` : 
-                                                          "Slack Workspace")}
+                                                        {integration.integration_metadata?.user_display_name || 
+                                                         integration.email || 
+                                                         "Slack Workspace"}
                                                     </span>
                                                 </div>
                                                 <div className="flex flex-wrap gap-2">

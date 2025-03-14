@@ -88,11 +88,13 @@ export default function GuidedAgentTriggers({ onTriggersChange, selectedTriggers
         }
     };
 
-    const createTrigger = async (integrationId: string) => {
+    const createTrigger = async (integrationId: string, serviceName: string) => {
         try {
-            setSelectedTriggers(prev => [...prev, integrationId]);
+            // Format the trigger as "service_name:integration_id"
+            const triggerValue = `${serviceName}:${integrationId}`;
+            setSelectedTriggers(prev => [...prev, triggerValue]);
             setSuccessMessage('Trigger set successfully');
-            onTriggersChange?.([...selectedTriggers, integrationId]);
+            onTriggersChange?.([...selectedTriggers, triggerValue]);
             setTimeout(() => setSuccessMessage(null), 3000);
         } catch (err) {
             setError('Failed to create trigger');
@@ -100,32 +102,9 @@ export default function GuidedAgentTriggers({ onTriggersChange, selectedTriggers
         }
     };
 
-    const enableSlackWatch = async (integrationId: string) => {
-        try {
-            // First call the watch endpoint to enable user-level events
-            const response = await axiosInstance.post(`/slack/watch/${integrationId}`);
-            if (response.status === 200) {
-                console.log('Slack watch enabled successfully:', response.data);
-                // Then create the trigger
-                await createTrigger(integrationId);
-            } else {
-                throw new Error('Failed to enable Slack watch');
-            }
-        } catch (err) {
-            setError('Failed to enable Slack watch');
-            console.error(err);
-        }
-    };
-
-    const handleDeleteTrigger = (integrationId: string) => {
-        setTriggerToDelete(integrationId);
-        setDeleteDialogOpen(true);
-    };
-
-    const removeTrigger = (integrationId: string) => {
-        const updatedTriggers = selectedTriggers.filter(id => id !== integrationId);
-        setSelectedTriggers(updatedTriggers);
-        onTriggersChange?.(updatedTriggers);
+    const handleDeleteTrigger = (triggerId: string) => {
+        setSelectedTriggers(prev => prev.filter(id => id !== triggerId));
+        onTriggersChange?.(selectedTriggers.filter(id => id !== triggerId));
         setDeleteDialogOpen(false);
         setTriggerToDelete(null);
     };
@@ -136,13 +115,20 @@ export default function GuidedAgentTriggers({ onTriggersChange, selectedTriggers
 
     const getActiveIntegrations = () => {
         return integrations.filter(integration =>
-            selectedTriggers.includes(integration.id)
+            selectedTriggers.some(trigger => trigger === `${integration.service_name}:${integration.id}`)
         );
     };
 
     const getInactiveIntegrations = () => {
         return integrations.filter(integration =>
-            !selectedTriggers.includes(integration.id)
+            !selectedTriggers.some(trigger => trigger === `${integration.service_name}:${integration.id}`)
+        );
+    };
+
+    const getInactiveIntegrationsByService = (serviceName: string) => {
+        return integrations.filter(integration =>
+            !selectedTriggers.some(trigger => trigger === `${integration.service_name}:${integration.id}`) &&
+            integration.service_name.toLowerCase() === serviceName.toLowerCase()
         );
     };
 
@@ -244,7 +230,7 @@ export default function GuidedAgentTriggers({ onTriggersChange, selectedTriggers
                                                                 <Button
                                                                     variant="ghost"
                                                                     size="sm"
-                                                                    onClick={() => handleDeleteTrigger(integration.id)}
+                                                                    onClick={() => handleDeleteTrigger(`${integration.service_name}:${integration.id}`)}
                                                                     className="hover:text-destructive transition-colors duration-200"
                                                                 >
                                                                     <Trash2 className="h-4 w-4" />
@@ -356,7 +342,7 @@ export default function GuidedAgentTriggers({ onTriggersChange, selectedTriggers
 
                     <div className="max-h-[60vh] overflow-y-auto">
                         <div className="space-y-4 pr-4">
-                            {getInactiveIntegrations().length === 0 ? (
+                            {getInactiveIntegrationsByService('gmail').length === 0 ? (
                                 <Card className="flex items-center justify-center p-4 text-center dark:bg-[#27272a] dark:border-gray-600">
                                     <div className="space-y-3">
                                         <Mail className="mx-auto h-12 w-12 text-muted-foreground opacity-50" />
@@ -364,7 +350,7 @@ export default function GuidedAgentTriggers({ onTriggersChange, selectedTriggers
                                     </div>
                                 </Card>
                             ) : (
-                                getInactiveIntegrations().map((integration) => (
+                                getInactiveIntegrationsByService('gmail').map((integration) => (
                                     <Card key={integration.id} className="p-4 dark:bg-[#27272a] dark:border-gray-600">
                                         <div className="flex items-start justify-between">
                                             <div className="space-y-3">
@@ -387,7 +373,7 @@ export default function GuidedAgentTriggers({ onTriggersChange, selectedTriggers
                                                 variant="outline"
                                                 size="sm"
                                                 onClick={() => {
-                                                    createTrigger(integration.id);
+                                                    createTrigger(integration.id, integration.service_name);
                                                     setDialogOpen(false);
                                                 }}
                                                 className="dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-600"
@@ -414,7 +400,7 @@ export default function GuidedAgentTriggers({ onTriggersChange, selectedTriggers
 
                     <div className="max-h-[60vh] overflow-y-auto">
                         <div className="space-y-4 pr-4">
-                            {getInactiveIntegrations().length === 0 ? (
+                            {getInactiveIntegrationsByService('slack').length === 0 ? (
                                 <Card className="flex items-center justify-center p-4 text-center dark:bg-[#27272a] dark:border-gray-600">
                                     <div className="space-y-3">
                                         <Mail className="mx-auto h-12 w-12 text-muted-foreground opacity-50" />
@@ -422,7 +408,7 @@ export default function GuidedAgentTriggers({ onTriggersChange, selectedTriggers
                                     </div>
                                 </Card>
                             ) : (
-                                getInactiveIntegrations().map((integration) => (
+                                getInactiveIntegrationsByService('slack').map((integration) => (
                                     <Card key={integration.id} className="p-4 dark:bg-[#27272a] dark:border-gray-600">
                                         <div className="flex items-start justify-between">
                                             <div className="space-y-3">
@@ -450,7 +436,7 @@ export default function GuidedAgentTriggers({ onTriggersChange, selectedTriggers
                                                 variant="outline"
                                                 size="sm"
                                                 onClick={() => {
-                                                    enableSlackWatch(integration.id);
+                                                    createTrigger(integration.id, integration.service_name);
                                                     setSlackDialogOpen(false);
                                                 }}
                                                 className="dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-600"
@@ -498,7 +484,7 @@ export default function GuidedAgentTriggers({ onTriggersChange, selectedTriggers
                         </Button>
                         <Button
                             variant="destructive"
-                            onClick={() => triggerToDelete && removeTrigger(triggerToDelete)}
+                            onClick={() => triggerToDelete && handleDeleteTrigger(triggerToDelete)}
                         >
                             Delete
                         </Button>

@@ -91,7 +91,7 @@ async def create_integration_token(
         client_secret=client_secret,
         expires_at=expires_at,
         email_address=email_address,
-        metadata=metadata
+        integration_metadata=metadata
     )
     db.add(token)
     try:

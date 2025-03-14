@@ -366,8 +366,10 @@ async def integration_status(
                 # Add Slack-specific details
                 try:
                     # Include the integration metadata for Slack
+                    # Use getattr with a default empty dict to handle SQLAlchemy lazy loading
+                    metadata = getattr(token, "integration_metadata", {}) or {}
                     integration_details.update({
-                        "integration_metadata": token.integration_metadata,
+                        "integration_metadata": metadata,
                         "permissions": [
                             "send_messages",
                             "read_messages",

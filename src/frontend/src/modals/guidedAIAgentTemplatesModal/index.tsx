@@ -1632,15 +1632,23 @@ export default function GuidedAIAgentTemplatesModal({
         // Save the updated flow and setup triggers
         addFlow({ flow: updatedFlow, override: false }).then((flowId) => {
             // Setup triggers for the new flow using the flowId
-            for (const triggerId of selectedTriggers) {
+            for (const triggerInfo of selectedTriggers) {
                 try {
-                    // First call - Watch Gmail with query parameters
-                    axiosTriggers.post(`/gmail/watch/${triggerId}?integration_id=${triggerId}&flow_id=${flowId}`);
-
-                    // Second call - Create integration trigger
-                    axiosTriggers.post(`/integrations/trigger?integration_id=${triggerId}&flow_id=${flowId}`);
+                    // Parse the trigger info (format: "service_name:integration_id")
+                    const [serviceName, integrationId] = triggerInfo.split(':');
+                    
+                    // Call the appropriate watch endpoint based on the service name
+                    if (serviceName === 'gmail') {
+                        axiosTriggers.post(`/gmail/watch/${integrationId}?integration_id=${integrationId}&flow_id=${flowId}`);
+                        // Create integration trigger
+                        axiosTriggers.post(`/integrations/trigger?integration_id=${integrationId}&flow_id=${flowId}`);
+                    } else if (serviceName === 'slack') {
+                        axiosTriggers.post(`/slack/watch/${integrationId}`);
+                        // Create integration trigger
+                        axiosTriggers.post(`/integrations/trigger?integration_id=${integrationId}&flow_id=${flowId}`);
+                    }
                 } catch (error) {
-                    console.error('Failed to setup trigger:', triggerId, error);
+                    console.error('Failed to setup trigger:', triggerInfo, error);
                 }
             }
 
