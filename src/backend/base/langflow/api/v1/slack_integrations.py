@@ -184,7 +184,27 @@ async def slack_callback(
         slack_user_id = authed_user.get("id")
         print(f"Slack user ID: {slack_user_id}")
         
+        # Extract team information
+        team_id = token_data.get("team", {}).get("id")
+        team_name = token_data.get("team", {}).get("name")
+        print(f"Team ID: {team_id}")
+        print(f"Team Name: {team_name}")
+        
+        # Initialize metadata dictionary
+        integration_metadata = {
+            "team_id": team_id,
+            "team_name": team_name,
+            "user_id": slack_user_id,
+            "watch_user_events": True,  # Default to enabled
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        }
+        
+        # Store the app's own user ID in the metadata - this is critical for mention detection
+        # Since we're using a user token, the app's user ID is the same as the authenticated user
+        integration_metadata["app_user_id"] = slack_user_id
+        
         slack_email = None
+        bot_user_id = None
         try:
             print("\n----- GETTING SLACK USER INFO -----")
             user_info_response = requests.get(
@@ -200,11 +220,68 @@ async def slack_callback(
             if user_info.get("ok"):
                 slack_email = user_info.get("user", {}).get("profile", {}).get("email")
                 print(f"Slack email: {slack_email}")
+                
+                # Add user display name to metadata
+                user_display_name = user_info.get("user", {}).get("profile", {}).get("display_name")
+                user_real_name = user_info.get("user", {}).get("profile", {}).get("real_name")
+                integration_metadata["user_display_name"] = user_display_name or user_real_name
+                
+                # If email is missing, log a warning but continue
+                if not slack_email:
+                    print("⚠️ No email found in Slack profile. This is not critical but may affect some features.")
             else:
                 print(f"⚠️ Error getting user info: {user_info.get('error')}")
         except Exception as e:
             print(f"⚠️ Error getting Slack user info: {str(e)}")
+            
+        # Get bot user ID if available
+        try:
+            print("\n----- GETTING BOT INFO -----")
+            if "bot_user_id" in token_data:
+                bot_user_id = token_data.get("bot_user_id")
+                integration_metadata["bot_user_id"] = bot_user_id
+                print(f"Bot User ID: {bot_user_id}")
+            else:
+                print("No bot_user_id found in token data. Using user ID for mention detection.")
+                
+            # Try to get team info to verify token and permissions
+            team_info_response = requests.get(
+                "https://slack.com/api/team.info",
+                headers={"Authorization": f"Bearer {user_access_token}"}
+            )
+            
+            if team_info_response.status_code == 200:
+                team_info = team_info_response.json()
+                if team_info.get("ok"):
+                    # Add additional team info to metadata
+                    integration_metadata["team_domain"] = team_info.get("team", {}).get("domain")
+                    print(f"Team domain: {integration_metadata['team_domain']}")
+                else:
+                    print(f"⚠️ Error getting team info: {team_info.get('error')}")
+                    # If we couldn't get team info, we should still have the team ID from the initial response
+                    if not integration_metadata.get("team_id"):
+                        print("⚠️ No team ID available. This will affect message routing.")
+            else:
+                print(f"⚠️ Error getting team info: {team_info_response.status_code}")
+        except Exception as e:
+            print(f"⚠️ Error getting additional Slack info: {str(e)}")
 
+        # Verify that we have the minimum required metadata
+        required_fields = ["team_id", "user_id"]
+        missing_fields = [field for field in required_fields if not integration_metadata.get(field)]
+        if missing_fields:
+            print(f"⚠️ Missing required metadata fields: {missing_fields}")
+            html_content = f"""
+            <html>
+                <script type="text/javascript">
+                    window.opener.postMessage({{ slackError: "missing_metadata" }}, "*");
+                    window.close();
+                </script>
+                <body>Error: Could not retrieve all required Slack information. Missing: {', '.join(missing_fields)}</body>
+            </html>
+            """
+            return HTMLResponse(content=html_content)
+        
         # Store the token in the database
         print("\n----- STORING TOKEN IN DATABASE -----")
         if not user_access_token:
@@ -233,6 +310,10 @@ async def slack_callback(
         # Create a clean copy of the token to avoid any reference issues
         clean_token = str(user_access_token).strip()
         print(f"Stored token prefix: {clean_token}")
+        
+        # Print the final metadata being stored
+        print(f"Integration metadata: {integration_metadata}")
+        
         # Create token in database with the clean token
         await create_integration_token(
             db=db,
@@ -244,7 +325,8 @@ async def slack_callback(
             client_id=SLACK_CLIENT_ID,
             client_secret=SLACK_CLIENT_SECRET,
             expires_at=None,
-            email_address=slack_email
+            email_address=slack_email,
+            metadata=integration_metadata
         )
         print("✅ Token stored successfully")
 
@@ -409,6 +491,8 @@ async def process_slack_message(
 ):
     """
     Process a Slack message and trigger any associated flows.
+    For channel messages (public/private), only trigger if the specific user linked to the app is mentioned.
+    For direct messages (DMs), always trigger.
     """
     start_time = time.perf_counter()
     try:
@@ -419,8 +503,10 @@ async def process_slack_message(
         channel = event.get("channel")
         text = event.get("text", "")
         user = event.get("user")
+        channel_type = event.get("channel_type", "")
         
         print(f"Channel: {channel}")
+        print(f"Channel Type: {channel_type}")
         print(f"Text: {text}")
         print(f"User: {user}")
         
@@ -432,6 +518,56 @@ async def process_slack_message(
         
         print(f"Processing for integration ID: {integration_id}")
         
+        # Determine if this is a DM or channel message
+        is_dm = channel_type == "im" or (channel and channel.startswith("D"))
+        
+        # Get the user ID associated with this integration
+        metadata = getattr(integration, "integration_metadata", {}) or {}
+        print(f"Integration metadata: {metadata}")
+        
+        # First try to get the user ID from the metadata
+        integration_user_id = metadata.get("user_id")
+        app_user_id = metadata.get("app_user_id") or integration_user_id
+        
+        # If we still don't have a user ID, try to get it from other sources
+        if not integration_user_id:
+            # Try to get it from the integration object directly
+            integration_user_id = getattr(integration, "slack_user_id", None)
+            print(f"Using slack_user_id from integration object: {integration_user_id}")
+            
+            # If still no user ID, use the message sender as a last resort
+            if not integration_user_id:
+                integration_user_id = user
+                print(f"No user ID found in metadata or integration, using message sender: {integration_user_id}")
+        else:
+            print(f"Found user_id in metadata: {integration_user_id}")
+            
+        # For app_user_id (the ID we check for mentions), use the best available ID
+        if not app_user_id:
+            app_user_id = integration_user_id
+            print(f"Using integration_user_id as app_user_id for mention detection: {app_user_id}")
+        else:
+            print(f"Found app_user_id in metadata: {app_user_id}")
+        
+        # Check if the specific user linked to the app is mentioned in the message
+        is_app_user_mentioned = False
+        if app_user_id and f"<@{app_user_id}>" in text:
+            is_app_user_mentioned = True
+            print(f"App user <@{app_user_id}> is mentioned in the message")
+        
+        # Apply trigger logic:
+        # - For DMs: Always process
+        # - For channels: Only process if the specific user linked to the app is mentioned
+        should_trigger = is_dm or is_app_user_mentioned
+        
+        print(f"Message type: {'DM' if is_dm else 'Channel'}")
+        print(f"App user mentioned: {is_app_user_mentioned}")
+        print(f"Should trigger flow: {should_trigger}")
+        
+        if not should_trigger:
+            print("Skipping message - not a DM and app user not mentioned")
+            return
+            
         # Get triggers for this integration
         from langflow.services.database.models.integration_trigger.model import IntegrationTrigger
         from sqlalchemy import select
@@ -472,6 +608,9 @@ async def process_slack_message(
                         "content": text,
                         "metadata": {
                             "channel": channel,
+                            "channel_type": channel_type,
+                            "is_dm": is_dm,
+                            "app_user_mentioned": is_app_user_mentioned,
                             "sender_id": user,
                             "timestamp": event.get("ts"),
                             "thread": event.get("thread_ts") or "Not in a thread",
@@ -575,6 +714,38 @@ async def watch_slack(
         team_id = team_data.get("team", {}).get("id")
         if not team_id:
             raise HTTPException(status_code=500, detail="Could not get team ID from Slack")
+            
+        # Get user identity from Slack API
+        print("Getting user identity from Slack API")
+        user_response = requests.get(
+            "https://slack.com/api/auth.test",
+            headers={"Authorization": f"Bearer {decrypted_token}"}
+        )
+        user_data = user_response.json()
+        if not user_data.get("ok"):
+            print(f"Error getting user identity: {user_data.get('error')}")
+            raise HTTPException(status_code=500, detail="Error getting user identity from Slack")
+            
+        user_id = user_data.get("user_id")
+        user_name = user_data.get("user")
+        if not user_id:
+            raise HTTPException(status_code=500, detail="Could not get user ID from Slack")
+            
+        print(f"Retrieved user ID: {user_id}, user name: {user_name}")
+        
+        # Get additional user info
+        user_info_response = requests.get(
+            "https://slack.com/api/users.info",
+            params={"user": user_id},
+            headers={"Authorization": f"Bearer {decrypted_token}"}
+        )
+        user_info = user_info_response.json()
+        print(f"User info response: {user_info}")
+        
+        user_display_name = None
+        if user_info.get("ok"):
+            user_profile = user_info.get("user", {}).get("profile", {})
+            user_display_name = user_profile.get("display_name") or user_profile.get("real_name")
         
         # Get current metadata
         current_metadata = integration.integration_metadata or {}
@@ -584,6 +755,9 @@ async def watch_slack(
         # Update with new values
         current_metadata.update({
             "team_id": team_id,
+            "user_id": user_id,
+            "app_user_id": user_id,  # This is critical for mention detection
+            "user_display_name": user_display_name or user_name,
             "watch_user_events": True,
             "updated_at": datetime.now(timezone.utc).isoformat()
         })
@@ -629,10 +803,18 @@ async def unwatch_slack(
     try:
         # Update metadata to disable user event watching
         metadata = integration.integration_metadata or {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+            
+        # Preserve important fields like user_id, app_user_id, etc.
+        # Only update the watch_user_events flag and timestamp
         metadata.update({
             "watch_user_events": False,
             "updated_at": datetime.now(timezone.utc).isoformat()
         })
+        
+        # Log the metadata for debugging
+        print(f"Updated metadata: {metadata}")
         
         # Update the integration directly
         integration.integration_metadata = metadata

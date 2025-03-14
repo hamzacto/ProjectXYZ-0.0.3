@@ -362,6 +362,24 @@ async def integration_status(
                         "status": "error",
                         "error_message": str(e)
                     })
+            elif token.service_name == "slack":
+                # Add Slack-specific details
+                try:
+                    # Include the integration metadata for Slack
+                    integration_details.update({
+                        "integration_metadata": token.integration_metadata,
+                        "permissions": [
+                            "send_messages",
+                            "read_messages",
+                            "manage_channels"
+                        ],
+                        "status": "active"
+                    })
+                except Exception as e:
+                    integration_details.update({
+                        "status": "error",
+                        "error_message": str(e)
+                    })
             
             integrations_info.append(integration_details)
         

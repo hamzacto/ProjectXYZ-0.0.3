@@ -18,8 +18,13 @@ interface IntegrationDetails {
     updated_at: string;
     expires_at: string | null;
     permissions: string[];
-    email: string | null;
+    email_address: string | null;
     status: 'active' | 'expired' | 'error';
+    integration_metadata?: {
+        user_display_name?: string;
+        team_name?: string;
+        [key: string]: any;
+    };
 }
 
 export default function SlackIntegrationsDetailPage() {
@@ -177,7 +182,10 @@ export default function SlackIntegrationsDetailPage() {
                                                 <div className="flex items-center gap-2">
                                                     {getStatusIcon(integration.status)}
                                                     <span className="font-medium">
-                                                        {integration.email || "Slack Workspace"}
+                                                        {integration.email_address || 
+                                                         (integration.integration_metadata?.user_display_name ? 
+                                                          `${integration.integration_metadata.user_display_name}` : 
+                                                          "Slack Workspace")}
                                                     </span>
                                                 </div>
                                                 <div className="flex flex-wrap gap-2">

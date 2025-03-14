@@ -35,6 +35,11 @@ interface IntegrationDetails {
     permissions: string[];
     email: string | null;
     status: 'active' | 'expired' | 'error';
+    integration_metadata?: {
+        user_display_name?: string;
+        team_name?: string;
+        [key: string]: any;
+    };
 }
 
 interface GuidedAgentTriggersProps {
@@ -226,7 +231,12 @@ export default function GuidedAgentTriggers({ onTriggersChange, selectedTriggers
                                                     <div className="flex items-center gap-2">
                                                         <ForwardedIconComponent name={getServiceIcon(integration.service_name)} className="h-5 w-5 text-gray-600 dark:text-gray-400" />
                                                         {getStatusIcon(integration.status)}
-                                                        <span className="text-sm dark:text-gray-300">{integration.email}</span>
+                                                        <span className="text-sm dark:text-gray-300">
+                                                            {integration.email || 
+                                                             (integration.integration_metadata?.user_display_name ? 
+                                                              `${integration.integration_metadata.user_display_name}` : 
+                                                              integration.service_name)}
+                                                        </span>
                                                     </div>
                                                     <TooltipProvider>
                                                         <Tooltip>
@@ -417,7 +427,12 @@ export default function GuidedAgentTriggers({ onTriggersChange, selectedTriggers
                                         <div className="flex items-start justify-between">
                                             <div className="space-y-3">
                                                 <div className="flex items-center gap-2">
-                                                    <span className="font-medium dark:text-gray-200">{integration.email}</span>
+                                                    <span className="font-medium dark:text-gray-200">
+                                                        {integration.email || 
+                                                         (integration.integration_metadata?.user_display_name ? 
+                                                          `${integration.integration_metadata.user_display_name}` : 
+                                                          integration.service_name)}
+                                                    </span>
                                                 </div>
                                                 <div className="flex flex-wrap gap-2">
                                                     {integration.permissions.map((permission) => (
