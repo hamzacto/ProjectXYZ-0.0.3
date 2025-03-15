@@ -40,6 +40,8 @@ from langflow.services.telemetry.schema import RunPayload
 from dotenv import load_dotenv
 import traceback
 import time
+from redis import asyncio as aioredis
+from contextlib import asynccontextmanager
 
 router = APIRouter(tags=["HubSpot Integrations"])
 
@@ -65,6 +67,19 @@ HUBSPOT_SCOPES = [
 ]
 
 load_dotenv()
+
+redis = aioredis.from_url("redis://localhost:6379")
+
+@asynccontextmanager
+async def redis_lock(lock_key: str, timeout: int = 300):
+    # Use the nx flag to set the key only if it doesn't exist.
+    is_locked = await redis.set(lock_key, "locked", ex=timeout, nx=True)
+    if not is_locked:
+        raise Exception("Lock already acquired")
+    try:
+        yield
+    finally:
+        await redis.delete(lock_key)
 
 @router.get("/auth/hubspot/login")
 async def hubspot_login(
@@ -450,8 +465,18 @@ async def hubspot_webhook(
             # Direct item access for SQLAlchemy Row
             if not integration_id and hasattr(integration, "__getitem__"):
                 try:
-                    integration_id = integration["id"]
-                    print(f"Got integration ID via item access: {integration_id}")
+                    # Don't use direct dictionary-style access for SQLAlchemy Row objects
+                    # integration_id = integration["id"]  # This causes the error
+                    
+                    # Instead, use the _mapping attribute or getattr for SQLAlchemy Row objects
+                    if hasattr(integration, "_mapping"):
+                        integration_id = integration._mapping.get("id")
+                    elif hasattr(integration, "IntegrationToken"):
+                        # For Row objects that have the model as a named attribute
+                        integration_id = getattr(getattr(integration, "IntegrationToken", None), "id", None)
+                    
+                    if integration_id:
+                        print(f"Got integration ID via safe item access: {integration_id}")
                 except (KeyError, TypeError, IndexError) as e:
                     print(f"Error with item access: {str(e)}")
             
@@ -886,61 +911,135 @@ async def process_hubspot_webhook(data: Dict, integration_id: UUID, db: AsyncSes
                         logger.error(f"Flow not found: {flow_id}")
                         continue
                     
-                    # Construct the message to send to the flow
-                    # If deal.creation event and we have deal data, pass the actual deal data
+                    # Prepare simplified message for the flow
+                    # If deal.creation event and we have deal data, pass simplified deal data
                     if event_type == "deal.creation" and deal_data:
+                        # Extract only necessary information from deal_data
+                        simplified_deal = {}
+                        
+                        # Include basic deal information
+                        if "id" in deal_data:
+                            simplified_deal["id"] = deal_data["id"]
+                            
+                        # Include essential properties
+                        if "properties" in deal_data:
+                            properties = deal_data["properties"]
+                            simplified_deal["properties"] = {
+                                "dealname": properties.get("dealname"),
+                                "amount": properties.get("amount"),
+                                "dealstage": properties.get("dealstage"),
+                                "closedate": properties.get("closedate"),
+                                "pipeline": properties.get("pipeline"),
+                                "hubspot_owner_id": properties.get("hubspot_owner_id")
+                            }
+                            # Remove None values
+                            simplified_deal["properties"] = {k: v for k, v in simplified_deal["properties"].items() if v is not None}
+                        
+                        # Include only IDs from associations
+                        if "associations" in deal_data:
+                            associations = deal_data["associations"]
+                            simplified_associations = {}
+                            
+                            # Extract company IDs
+                            if "companies" in associations and "results" in associations["companies"]:
+                                simplified_associations["company_ids"] = [
+                                    result["id"] for result in associations["companies"]["results"]
+                                ]
+                            
+                            # Extract contact IDs
+                            if "contacts" in associations and "results" in associations["contacts"]:
+                                simplified_associations["contact_ids"] = [
+                                    result["id"] for result in associations["contacts"]["results"]
+                                ]
+                                
+                            if simplified_associations:
+                                simplified_deal["associations"] = simplified_associations
+                        
                         message = {
                             "event_type": event_type,
                             "object_id": object_id,
-                            "portal_id": portal_id,
-                            "deal_data": deal_data,  # Include the actual deal data
+                            "deal": simplified_deal,
                             "timestamp": datetime.now().isoformat()
                         }
                     else:
-                        # For other event types, use the original format
+                        # For other event types, use a simplified format
                         message = {
                             "event_type": event_type,
                             "object_id": object_id,
-                            "portal_id": portal_id,
-                            "event_data": data if isinstance(data, dict) else event,
                             "timestamp": datetime.now().isoformat()
                         }
+                    
+                    # Create the request
+                    from langflow.api.v1.schemas import SimplifiedAPIRequest
+                    import json
+                    from uuid import UUID
+                    
+                    # Convert message dictionary to JSON string
+                    input_value_str = json.dumps(message, default=lambda o: str(o) if isinstance(o, UUID) else None)
+                    
+                    input_request = SimplifiedAPIRequest(
+                        input_value=input_value_str,
+                        input_type="chat",
+                        output_type="chat"
+                    )
+                    
+                    print(f"Executing flow {flow_id} with HubSpot webhook data")
+                    
+                    # Use Redis lock to prevent concurrent execution of the same flow
+                    lock_key = f"flow_lock:{flow_id}"
+                    try:
+                        async with redis_lock(lock_key):
+                            start_time = time.perf_counter()
+                            try:
+                                # Run the flow with the corrected function call
+                                from langflow.api.v1.endpoints import simple_run_flow
+                                response = await simple_run_flow(
+                                    flow=flow,
+                                    input_request=input_request,
+                                    stream=False
+                                )
+                                print(f"Flow execution completed: {response}")
+                                
+                                # Log telemetry if available
+                                try:
+                                    from langflow.services.deps import get_telemetry_service
+                                    telemetry_service = get_telemetry_service()
+                                    from langflow.services.telemetry.schema import RunPayload
+                                    await telemetry_service.log_package_run(
+                                        RunPayload(
+                                            run_is_webhook=True,
+                                            run_seconds=int(time.perf_counter() - start_time),
+                                            run_success=True,
+                                            run_error_message=""
+                                        )
+                                    )
+                                except Exception as telemetry_error:
+                                    logger.error(f"Error logging telemetry: {str(telemetry_error)}")
+                                    
+                            except Exception as flow_error:
+                                logger.error(f"Error running flow {flow_id}: {str(flow_error)}")
+                                traceback.print_exc()
+                                
+                                # Log telemetry failure if available
+                                try:
+                                    from langflow.services.deps import get_telemetry_service
+                                    telemetry_service = get_telemetry_service()
+                                    from langflow.services.telemetry.schema import RunPayload
+                                    await telemetry_service.log_package_run(
+                                        RunPayload(
+                                            run_is_webhook=True,
+                                            run_seconds=int(time.perf_counter() - start_time),
+                                            run_success=False,
+                                            run_error_message=str(flow_error)
+                                        )
+                                    )
+                                except Exception as telemetry_error:
+                                    logger.error(f"Error logging telemetry: {str(telemetry_error)}")
+                    except Exception as lock_error:
+                        logger.error(f"Error acquiring lock for flow {flow_id}: {str(lock_error)}")
+                        continue
                 except Exception as user_flow_error:
                     logger.error(f"Error getting user or flow for trigger {trigger_id}: {str(user_flow_error)}")
-                    traceback.print_exc()
-                    continue
-                    
-                # Get the flow data
-                flow_data = getattr(flow, "data", {})
-                flow_id = getattr(flow, "id", None)
-                
-                # Create the request
-                from langflow.api.v1.schemas import SimplifiedAPIRequest
-                import json
-                from uuid import UUID
-                
-                # Convert message dictionary to JSON string
-                input_value_str = json.dumps(message, default=lambda o: str(o) if isinstance(o, UUID) else None)
-                
-                input_request = SimplifiedAPIRequest(
-                    input_value=input_value_str,
-                    input_type="chat",
-                    output_type="chat"
-                )
-                
-                print(f"Executing flow {flow_id} with HubSpot webhook data")
-                
-                # Run the flow with the corrected function call
-                from langflow.api.v1.endpoints import simple_run_flow
-                try:
-                    response = await simple_run_flow(
-                        flow=flow,
-                        input_request=input_request,
-                        stream=False
-                    )
-                    print(f"Flow execution completed: {response}")
-                except Exception as flow_error:
-                    logger.error(f"Error running flow {flow_id}: {str(flow_error)}")
                     traceback.print_exc()
                     continue
             except Exception as trigger_error:
