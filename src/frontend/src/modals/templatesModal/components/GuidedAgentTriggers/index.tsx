@@ -65,6 +65,7 @@ export default function GuidedAgentTriggers({ onTriggersChange, selectedTriggers
     const [successMessage, setSuccessMessage] = useState<string | null>(null);
     const [dialogOpen, setDialogOpen] = useState(false);
     const [slackDialogOpen, setSlackDialogOpen] = useState(false);
+    const [hubSpotDialogOpen, setHubSpotDialogOpen] = useState(false);
     const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
     const [triggerToDelete, setTriggerToDelete] = useState<string | null>(null);
     const axiosInstance = axios.create({
@@ -136,7 +137,8 @@ export default function GuidedAgentTriggers({ onTriggersChange, selectedTriggers
         const serviceIcons = {
             'gmail': 'Gmail',
             'slack': 'Slack',
-            'whatsapp': 'WhatsApp'
+            'whatsapp': 'WhatsApp',
+            'hubspot': 'HubSpot'
         };
         
         return serviceIcons[serviceName.toLowerCase()] || 'Mail';
@@ -325,6 +327,26 @@ export default function GuidedAgentTriggers({ onTriggersChange, selectedTriggers
                                         Add WhatsApp Trigger
                                     </Button>
                                 </div>
+
+                                <div className="group rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#27272a] p-6 transition-all duration-200 hover:shadow-sm">
+                                    <div className="flex items-start justify-between mb-4">
+                                        <div>
+                                            <h3 className="text-base font-semibold dark:text-gray-100">HubSpot</h3>
+                                            <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                                                Connect HubSpot accounts to create automated workflows for deals
+                                            </p>
+                                        </div>
+                                        <ForwardedIconComponent name="HubSpot" className="h-6 w-6 text-gray-600 dark:text-gray-400" />
+                                    </div>
+                                    <Button
+                                        variant="outline"
+                                        className="w-full justify-start gap-2"
+                                        onClick={() => setHubSpotDialogOpen(true)}
+                                    >
+                                        <Plus className="h-4 w-4" />
+                                        Add HubSpot Trigger
+                                    </Button>
+                                </div>
                             </div>
                         </div>
                     </motion.div>
@@ -442,6 +464,64 @@ export default function GuidedAgentTriggers({ onTriggersChange, selectedTriggers
                                                 className="dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-600"
                                             >
                                                 Select Workspace
+                                            </Button>
+                                        </div>
+                                    </Card>
+                                ))
+                            )}
+                        </div>
+                    </div>
+                </DialogContent>
+            </Dialog>
+
+            <Dialog open={hubSpotDialogOpen} onOpenChange={setHubSpotDialogOpen}>
+                <DialogContent className="max-w-xl dark:bg-[#27272a] dark:border-gray-700">
+                    <DialogHeader>
+                        <DialogTitle className="dark:text-gray-100">Select HubSpot Account</DialogTitle>
+                        <DialogDescription className="dark:text-gray-400">
+                            Choose an account to create a new trigger
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    <div className="max-h-[60vh] overflow-y-auto">
+                        <div className="space-y-4 pr-4">
+                            {getInactiveIntegrationsByService('hubspot').length === 0 ? (
+                                <Card className="flex items-center justify-center p-4 text-center dark:bg-[#27272a] dark:border-gray-600">
+                                    <div className="space-y-3">
+                                        <Mail className="mx-auto h-12 w-12 text-muted-foreground opacity-50" />
+                                        <p className="text-muted-foreground dark:text-gray-400">No available HubSpot accounts</p>
+                                    </div>
+                                </Card>
+                            ) : (
+                                getInactiveIntegrationsByService('hubspot').map((integration) => (
+                                    <Card key={integration.id} className="p-4 dark:bg-[#27272a] dark:border-gray-600">
+                                        <div className="flex items-start justify-between">
+                                            <div className="space-y-3">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="font-medium dark:text-gray-200">{integration.email}</span>
+                                                </div>
+                                                <div className="flex flex-wrap gap-2">
+                                                    {integration.permissions.map((permission) => (
+                                                        <Badge
+                                                            key={permission}
+                                                            variant="secondary"
+                                                            className="text-xs dark:bg-gray-600 dark:text-gray-300"
+                                                        >
+                                                            {permission}
+                                                        </Badge>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={() => {
+                                                    createTrigger(integration.id, integration.service_name);
+                                                    setHubSpotDialogOpen(false);
+                                                }}
+                                                className="dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-600"
+                                            >
+                                                Select Account
                                             </Button>
                                         </div>
                                     </Card>

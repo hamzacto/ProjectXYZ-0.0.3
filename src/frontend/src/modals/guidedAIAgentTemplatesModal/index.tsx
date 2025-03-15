@@ -1651,6 +1651,11 @@ export default function GuidedAIAgentTemplatesModal({
                         axiosTriggers.post(`/slack/watch/${integrationId}`);
                         // Create integration trigger
                         axiosTriggers.post(`/integrations/trigger?integration_id=${integrationId}&flow_id=${flowId}`);
+                    } else if (serviceName === 'hubspot') {
+                        // Create integration trigger for HubSpot
+                        axiosTriggers.post(`/create-integration-trigger/hubspot?integration_id=${integrationId}&flow_id=${flowId}`);
+                        // Set up HubSpot webhook for deal events
+                        axiosTriggers.post(`/hubspot/watch/${integrationId}`);
                     }
                 } catch (error) {
                     console.error('Failed to setup trigger:', triggerInfo, error);
