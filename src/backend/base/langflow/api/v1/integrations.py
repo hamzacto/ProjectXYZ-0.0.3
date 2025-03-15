@@ -86,13 +86,6 @@ async_engine = create_async_engine(
 
 load_dotenv()
 
-OLLAMA_API_URL = os.getenv('OLLAMA_API_URL')
-MILVUS_HOST = os.getenv('MILVUS_HOST')
-MILVUS_PORT = os.getenv('MILVUS_PORT')
-MILVUS_USER = os.getenv('MILVUS_USER')
-MILVUS_PASSWORD = os.getenv('MILVUS_PASSWORD')
-MILVUS_DATABASE = os.getenv('MILVUS_DATABASE')
-
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CLIENT_SECRETS_FILE = os.path.join(BASE_DIR, "../../../../../../config/client_secret.json")
 PUBSUB_TOPIC_NAME = "projects/langflow-449814/topics/gmail-notifications"
@@ -116,21 +109,6 @@ REDIRECT_URI = "http://localhost:3000/api/v1/auth/callback"
 TOKEN_STORAGE_PATH = os.path.join(BASE_DIR, "token.pkl")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 router = APIRouter(tags=["Gmail"])
-
-# Slack API configuration
-SLACK_CLIENT_ID = os.getenv("SLACK_CLIENT_ID")
-SLACK_CLIENT_SECRET = os.getenv("SLACK_CLIENT_SECRET")
-SLACK_REDIRECT_URI = os.getenv("SLACK_REDIRECT_URI")
-SLACK_SCOPES = [
-    "channels:history", 
-    "channels:read",
-    "chat:write", 
-    "im:history",
-    "im:read",
-    "im:write",
-    "users:read",
-    "users.profile:read"
-]
 
 async def get_gmail_profile(email_service):
     profile = email_service.users().getProfile(userId="me").execute()
@@ -376,6 +354,28 @@ async def integration_status(
                             "manage_channels"
                         ],
                         "status": "active"
+                    })
+                except Exception as e:
+                    integration_details.update({
+                        "status": "error",
+                        "error_message": str(e)
+                    })
+            elif token.service_name == "hubspot":
+                # Add HubSpot-specific details
+                try:
+                    # Include the integration metadata for HubSpot
+                    # Use getattr with a default empty dict to handle SQLAlchemy lazy loading
+                    metadata = getattr(token, "integration_metadata", {}) or {}
+                    email = getattr(token, "email_address", None)
+                    integration_details.update({
+                        "integration_metadata": metadata,
+                        "permissions": [
+                            "contacts",
+                            "companies",
+                            "deals"
+                        ],
+                        "status": "active",
+                        "email": email
                     })
                 except Exception as e:
                     integration_details.update({

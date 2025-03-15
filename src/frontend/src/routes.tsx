@@ -40,6 +40,7 @@ import GuidedAgentIntegrations from "./modals/templatesModal/components/GuidedAg
 import GuidedAgentIntegrationsPage from "./pages/GuidedAgentIntegrationsPage";
 import GmailIntegrationsDetailPage from "./pages/GmailIntegrationsDetailPage/index";
 import SlackIntegrationsDetailPage from "./pages/SlackIntegrationsDetailPage/index";
+import HubSpotIntegrationsDetailPage from "./pages/HubSpotIntegrationsDetailPage/index";
 
 const AdminPage = lazy(() => import("./pages/AdminPage"));
 const LoginAdminPage = lazy(() => import("./pages/AdminPage/LoginPage"));
@@ -193,6 +194,10 @@ const router = createBrowserRouter(
                 <Route
                   path="integrations/slack"
                   element={<SlackIntegrationsDetailPage />}
+                />
+                <Route
+                  path="integrations/hubspot"
+                  element={<HubSpotIntegrationsDetailPage />}
                 />
                 <Route
                   path="store/:id/"

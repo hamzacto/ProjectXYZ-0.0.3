@@ -50,7 +50,13 @@ from .slack_message_send import SlackMessageSenderComponent
 from .slack_load_messages import SlackRetrieveMessagesComponent
 from .slack_list_channels_users import SlackListChannelsUsersComponent
 from .slack_dm_message import SlackDMSenderComponent
-
+from .hubspot_create_contact import HubSpotContactCreatorComponent
+from .hubspot_create_deal import HubSpotDealCreatorComponent
+from .hubspot_create_company import HubSpotCompanyCreatorComponent
+from .hubspot_load_companies import HubSpotCompanyLoaderComponent
+from .hubspot_load_contacts import HubSpotContactLoaderComponent
+from .hubspot_load_deals import HubSpotDealLoaderComponent
+from .hubspot_update_deal import HubSpotDealUpdaterComponent
 __all__ = [
     "ArXivComponent",
     "AstraDBCQLToolComponent",
@@ -98,5 +104,12 @@ __all__ = [
     "GoogleSheetsDataModifierComponent",
     "SlackRetrieveMessagesComponent",
     "SlackListChannelsUsersComponent",
-    "SlackDMSenderComponent"   
+    "SlackDMSenderComponent",
+    "HubSpotContactCreatorComponent",
+    "HubSpotDealCreatorComponent",
+    "HubSpotCompanyCreatorComponent",
+    "HubSpotCompanyLoaderComponent",
+    "HubSpotContactLoaderComponent",
+    "HubSpotDealLoaderComponent",
+    "HubSpotDealUpdaterComponent"
 ]

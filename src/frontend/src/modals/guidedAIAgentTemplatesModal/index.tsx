@@ -1107,7 +1107,12 @@ export default function GuidedAIAgentTemplatesModal({
                 || tool.display_name === "Slack Message Sender"
                 || tool.display_name === "Slack Retrieve Messages"
                 || tool.display_name === "Slack List Channels & Users"
-                || tool.display_name === "Slack DM Sender") {
+                || tool.display_name === "Slack DM Sender"
+                || tool.display_name === "HubSpot Contact Creator"
+                || tool.display_name === "HubSpot Deal Creator"
+                || tool.display_name === "HubSpot Company Creator"
+                || tool.display_name === "HubSpot Company Loader"
+                || tool.display_name === "HubSpot Contact Loader") {
                 // Get the access token from cookies
                 const token = document.cookie
                     .split('; ')

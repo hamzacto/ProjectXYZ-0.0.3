@@ -18,6 +18,7 @@ from langflow.api.v1 import (
     integrations_router,
     vectorstore_router,
     slack_integrations_router,
+    hubspot_integrations_router,
 )
 from langflow.api.v2 import files_router as files_router_v2
 
@@ -48,3 +49,4 @@ router_v2.include_router(files_router_v2)
 router.include_router(integrations_router)
 router.include_router(vectorstore_router)
 router.include_router(slack_integrations_router)
+router.include_router(hubspot_integrations_router)
