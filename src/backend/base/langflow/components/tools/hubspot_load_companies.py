@@ -167,25 +167,49 @@ class HubSpotCompanyLoaderComponent(LCToolComponent):
         user_id: str = "",
         query: str = ""
     ) -> list[Data]:
-        # Validate and convert user_id into UUID if possible.
-        try:
-            user_uuid = UUID(self.user_id)
-        except Exception as e:
-            error_message = f"Invalid user_id provided: {e}"
-            logger.error(error_message)
-            return [Data(text=error_message)]
-
+        # First, try to use the user_id parameter if provided
+        user_id_to_use = self.user_id
+        
+        # Initialize user_id_uuid as None
+        user_id_uuid = None
+        
+        # Try to convert the user_id to UUID if it looks like a UUID
+        if user_id_to_use:
+            try:
+                # Only try to convert to UUID if it looks like one
+                if '-' in user_id_to_use and len(user_id_to_use) > 30:
+                    user_id_uuid = UUID(user_id_to_use)
+                    logger.info(f"Successfully converted user_id to UUID: {user_id_uuid}")
+                else:
+                    logger.warning(f"User ID doesn't appear to be in UUID format: {user_id_to_use}")
+            except ValueError as e:
+                logger.warning(f"Couldn't convert user_id to UUID: {user_id_to_use}, Error: {str(e)}")
+                # Continue without a UUID - we'll handle this case below
+        
         engine = create_engine("sqlite:///src/backend/base/langflow/langflow.db")
         SQLModel.metadata.create_all(engine)
 
         try:
             with Session(engine) as db:
-                tokens = db.exec(
-                    select(IntegrationToken).where(IntegrationToken.user_id == user_uuid)
-                ).all()
+                # Query for integration tokens with service_name 'hubspot'
+                # If we have a valid UUID, filter by user_id, otherwise get all HubSpot tokens
+                if user_id_uuid:
+                    logger.info(f"Querying for HubSpot tokens with user_id: {user_id_uuid}")
+                    tokens = db.exec(
+                        select(IntegrationToken).where(
+                            (IntegrationToken.user_id == user_id_uuid) & 
+                            (IntegrationToken.service_name.like("%hubspot%"))
+                        )
+                    ).all()
+                else:
+                    # If we don't have a UUID, just get all HubSpot tokens
+                    logger.info("Querying for all HubSpot tokens")
+                    tokens = db.exec(
+                        select(IntegrationToken).where(IntegrationToken.service_name.like("%hubspot%"))
+                    ).all()
 
                 if not tokens:
-                    error_message = "No token was found for this user."
+                    error_message = "No token was found."
                     logger.error(error_message)
                     return [Data(text=error_message)]
 
@@ -222,20 +246,101 @@ class HubSpotCompanyLoaderComponent(LCToolComponent):
                     return [Data(text=error_message)]
 
                 # Build the API endpoint URL for companies
-                url = "https://api.hubapi.com/crm/v3/objects/companies"
+                url = "https://api.hubapi.com/crm/v3/objects/companies/search"
                 headers = {
                     "Authorization": f"Bearer {access_token}",
                     "Content-Type": "application/json"
                 }
-                # Specify desired company properties. Adjust as needed.
-                params = {
+                
+                # Prepare the request payload
+                payload = {
                     "limit": max_results,
-                    "properties": "name,domain,industry,numberofemployees,city,state,country,phone,createdate,lastmodifieddate"
+                    "properties": ["name", "domain", "industry", "numberofemployees", "city", "state", "country", "phone", "createdate", "lastmodifieddate"]
                 }
+                
+                # Add search filters if query is provided
                 if query:
-                    params["q"] = query
-
-                response = requests.get(url, headers=headers, params=params)
+                    logger.info(f"Filtering companies with query: {query}")
+                    
+                    # Check if the query is a numeric ID
+                    if query.isdigit():
+                        logger.info(f"Query appears to be a company ID: {query}")
+                        # Use a direct GET request to fetch by ID instead of search
+                        company_id_url = f"https://api.hubapi.com/crm/v3/objects/companies/{query}"
+                        params = {
+                            "properties": "name,domain,industry,numberofemployees,city,state,country,phone,createdate,lastmodifieddate"
+                        }
+                        response = requests.get(company_id_url, headers=headers, params=params)
+                        
+                        if response.status_code == 401:
+                            logger.info("Access token expired or invalid. Attempting to refresh...")
+                            new_token = self._refresh_hubspot_token(hubspot_token)
+                            if not new_token:
+                                return [Data(text="Failed to refresh HubSpot token after 401 error.")]
+                            headers["Authorization"] = f"Bearer {new_token}"
+                            response = requests.get(company_id_url, headers=headers, params=params)
+                            
+                        if response.status_code == 200:
+                            # Process single company response
+                            company = response.json()
+                            company_id = company.get("id", "Unknown ID")
+                            props = company.get("properties", {})
+                            name = props.get("name", "N/A")
+                            domain = props.get("domain", "N/A")
+                            industry = props.get("industry", "N/A")
+                            numberofemployees = props.get("numberofemployees", "N/A")
+                            city = props.get("city", "N/A")
+                            state = props.get("state", "N/A")
+                            country = props.get("country", "N/A")
+                            phone = props.get("phone", "N/A")
+                            createdate = props.get("createdate", "N/A")
+                            lastmodifieddate = props.get("lastmodifieddate", "N/A")
+                            
+                            formatted = (
+                                f"ID: {company_id}\n"
+                                f"Name: {name}\n"
+                                f"Domain: {domain}\n"
+                                f"Industry: {industry}\n"
+                                f"Number of Employees: {numberofemployees}\n"
+                                f"City: {city}\n"
+                                f"State: {state}\n"
+                                f"Country: {country}\n"
+                                f"Phone: {phone}\n"
+                                f"Created Date: {createdate}\n"
+                                f"Last Modified Date: {lastmodifieddate}\n"
+                            )
+                            return [Data(text=formatted)]
+                        elif response.status_code == 404:
+                            return [Data(text=f"No company found with ID: {query}")]
+                        else:
+                            error_message = f"Failed to retrieve company by ID: {response.text}"
+                            logger.error(error_message)
+                            return [Data(text=error_message)]
+                    
+                    # If not a numeric ID, use the search endpoint with filters for name and domain
+                    payload["filterGroups"] = [
+                        {
+                            "filters": [
+                                {
+                                    "propertyName": "name",
+                                    "operator": "CONTAINS_TOKEN",
+                                    "value": query
+                                }
+                            ]
+                        },
+                        {
+                            "filters": [
+                                {
+                                    "propertyName": "domain",
+                                    "operator": "CONTAINS_TOKEN",
+                                    "value": query
+                                }
+                            ]
+                        }
+                    ]
+                
+                # Make the API request
+                response = requests.post(url, headers=headers, json=payload)
 
                 # If token expired/invalid, attempt a refresh and retry
                 if response.status_code == 401:
@@ -244,7 +349,7 @@ class HubSpotCompanyLoaderComponent(LCToolComponent):
                     if not new_token:
                         return [Data(text="Failed to refresh HubSpot token after 401 error.")]
                     headers["Authorization"] = f"Bearer {new_token}"
-                    response = requests.get(url, headers=headers, params=params)
+                    response = requests.post(url, headers=headers, json=payload)
 
                 if response.status_code != 200:
                     error_message = f"Failed to retrieve companies: {response.text}"

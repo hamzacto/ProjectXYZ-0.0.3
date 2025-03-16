@@ -384,6 +384,34 @@ async def slack_callback(
         print("===== END SLACK CALLBACK DEBUG INFO =====\n")
         raise HTTPException(status_code=400, detail=f"Slack OAuth error: {str(e)}")
 
+from redis import asyncio as aioredis
+from contextlib import asynccontextmanager
+
+# Initialize Redis client
+redis = aioredis.from_url("redis://localhost:6379")
+
+@asynccontextmanager
+async def slack_redis_lock(lock_key: str, timeout: int = 300):
+    """
+    Asynchronous context manager for Redis-based distributed locking.
+    Prevents race conditions when processing multiple Slack events simultaneously.
+    
+    Args:
+        lock_key: Unique key for the lock
+        timeout: Lock expiration time in seconds
+    """
+    # Use the nx flag to set the key only if it doesn't exist
+    is_locked = await redis.set(lock_key, "locked", ex=timeout, nx=True)
+    if not is_locked:
+        print(f"Lock already acquired for {lock_key}")
+        raise Exception(f"Lock already acquired for {lock_key}")
+    try:
+        print(f"Lock acquired for {lock_key}")
+        yield
+    finally:
+        await redis.delete(lock_key)
+        print(f"Lock released for {lock_key}")
+
 @router.post("/slack/events")
 async def slack_webhook(request: Request, db: AsyncSession = Depends(get_session)):
     """
@@ -441,79 +469,91 @@ async def process_user_slack_message(data, db=None):
     try:
         print("\n===== PROCESSING USER SLACK MESSAGE =====")
         team_id = data.get("team_id")
-        print(f"Processing message for team_id: {team_id}")
+        event = data.get("event", {})
+        event_id = event.get("event_ts") or event.get("ts") or str(uuid4())
+        print(f"Processing message for team_id: {team_id}, event_id: {event_id}")
         
-        # Create a new database session instead of reusing the one from the webhook handler
-        from langflow.services.deps import get_db_service
-        async with get_db_service().with_session() as new_db:
-            # Get all Slack integrations
-            from sqlalchemy import select
-            
-            statement = select(IntegrationToken).where(IntegrationToken.service_name == "slack")
-            results = await new_db.execute(statement)
-            integrations = results.scalars().all()
-            
-            print(f"Found {len(integrations)} Slack integrations")
-            
-            valid_integrations = []
-            for integration in integrations:
-                try:
-                    # Safely access integration fields using getattr
-                    integration_id = getattr(integration, "id", None)
-                    metadata = getattr(integration, "integration_metadata", {}) or {}
-                    service_name = getattr(integration, "service_name", None)
-                    user_id = getattr(integration, "user_id", None)
-                    access_token = getattr(integration, "access_token", None)
+        # Create a lock key based on the event ID to prevent duplicate processing
+        lock_key = f"slack:event:{event_id}"
+        
+        try:
+            async with slack_redis_lock(lock_key, timeout=60):
+                # Create a new database session instead of reusing the one from the webhook handler
+                from langflow.services.deps import get_db_service
+                async with get_db_service().with_session() as new_db:
+                    # Get all Slack integrations
+                    from sqlalchemy import select
                     
-                    print(f"Integration ID: {integration_id}")
-                    print(f"Integration metadata: {metadata}")
-                    print(f"Service name: {service_name}")
-                    print(f"User ID: {user_id}")
-                    print(f"Has access token: {access_token is not None}")
+                    statement = select(IntegrationToken).where(IntegrationToken.service_name == "slack")
+                    results = await new_db.execute(statement)
+                    integrations = results.scalars().all()
                     
-                    # Check if the integration has the required metadata
-                    integration_team_id = metadata.get("team_id")
-                    watch_user_events = metadata.get("watch_user_events", False)
+                    print(f"Found {len(integrations)} Slack integrations")
                     
-                    print(f"Integration team_id: {integration_team_id}")
-                    print(f"Watch user events: {watch_user_events}")
+                    valid_integrations = []
+                    for integration in integrations:
+                        try:
+                            # Safely access integration fields using getattr
+                            integration_id = getattr(integration, "id", None)
+                            metadata = getattr(integration, "integration_metadata", {}) or {}
+                            service_name = getattr(integration, "service_name", None)
+                            user_id = getattr(integration, "user_id", None)
+                            access_token = getattr(integration, "access_token", None)
+                            
+                            print(f"Integration ID: {integration_id}")
+                            print(f"Integration metadata: {metadata}")
+                            print(f"Service name: {service_name}")
+                            print(f"User ID: {user_id}")
+                            print(f"Has access token: {access_token is not None}")
+                            
+                            # Check if the integration has the required metadata
+                            integration_team_id = metadata.get("team_id")
+                            watch_user_events = metadata.get("watch_user_events", False)
+                            
+                            print(f"Integration team_id: {integration_team_id}")
+                            print(f"Watch user events: {watch_user_events}")
+                            
+                            # Check if this integration is for the team that sent the message and is watching user events
+                            if integration_team_id == team_id and watch_user_events:
+                                print(f"Found valid integration: {integration_id}")
+                                valid_integrations.append(integration)
+                        except Exception as e:
+                            print(f"Error processing integration: {str(e)}")
+                            traceback.print_exc()
                     
-                    # Check if this integration is for the team that sent the message and is watching user events
-                    if integration_team_id == team_id and watch_user_events:
-                        print(f"Found valid integration: {integration_id}")
-                        valid_integrations.append(integration)
-                except Exception as e:
-                    print(f"Error processing integration: {str(e)}")
-                    traceback.print_exc()
-            
-            print(f"Found {len(valid_integrations)} valid integrations for team_id {team_id}")
-            
-            # Process each valid integration
-            for integration in valid_integrations:
-                try:
-                    # Get the decrypted access token
-                    try:
-                        # Try to get the token using the get_token method
-                        decrypted_token = integration.get_token()
-                        print(f"Successfully decrypted token using get_token()")
-                    except Exception as e:
-                        print(f"Error using get_token(): {str(e)}")
-                        # Fall back to manual decryption
-                        from langflow.services.database.models.integration_token.model import decrypt_token
-                        decrypted_token = decrypt_token(integration.access_token)
-                        print(f"Successfully decrypted token using decrypt_token()")
+                    print(f"Found {len(valid_integrations)} valid integrations for team_id {team_id}")
                     
-                    # Validate the token format
-                    if decrypted_token and (decrypted_token.startswith("xoxp-") or decrypted_token.startswith("xoxb-")):
-                        print(f"Token validation passed")
-                        # Process the message with the valid integration
-                        event = data.get("event", {})
-                        await process_slack_message(event, integration, decrypted_token, new_db)
-                    else:
-                        print(f"Invalid token format: {decrypted_token[:5]}... (token doesn't start with xoxp- or xoxb-)")
-                except Exception as e:
-                    print(f"Error processing integration {getattr(integration, 'id', 'unknown')}: {str(e)}")
-                    traceback.print_exc()
+                    # Process each valid integration
+                    for integration in valid_integrations:
+                        try:
+                            # Get the decrypted access token
+                            try:
+                                # Try to get the token using the get_token method
+                                decrypted_token = integration.get_token()
+                                print(f"Successfully decrypted token using get_token()")
+                            except Exception as e:
+                                print(f"Error using get_token(): {str(e)}")
+                                # Fall back to manual decryption
+                                from langflow.services.database.models.integration_token.model import decrypt_token
+                                decrypted_token = decrypt_token(integration.access_token)
+                                print(f"Successfully decrypted token using decrypt_token()")
+                            
+                            # Validate the token format
+                            if decrypted_token and (decrypted_token.startswith("xoxp-") or decrypted_token.startswith("xoxb-")):
+                                print(f"Token validation passed")
+                                # Process the message with the valid integration
+                                event = data.get("event", {})
+                                await process_slack_message(event, integration, decrypted_token, new_db)
+                            else:
+                                print(f"Invalid token format: {decrypted_token[:5]}... (token doesn't start with xoxp- or xoxb-)")
+                        except Exception as e:
+                            print(f"Error processing integration {getattr(integration, 'id', 'unknown')}: {str(e)}")
+                            traceback.print_exc()
+        except Exception as e:
+            if "Lock already acquired" in str(e):
+                print(f"Skipping duplicate event processing: {event_id}")
+            else:
+                raise
     except Exception as e:
         print(f"Error in process_user_slack_message: {str(e)}")
         traceback.print_exc()
@@ -539,168 +579,177 @@ async def process_slack_message(
         text = event.get("text", "")
         user = event.get("user")
         channel_type = event.get("channel_type", "")
+        event_ts = event.get("ts") or event.get("event_ts") or str(uuid4())
         
-        print(f"Channel: {channel}")
-        print(f"Channel Type: {channel_type}")
-        print(f"Text: {text}")
-        print(f"User: {user}")
+        # Create a lock key based on the event timestamp to prevent duplicate processing
+        lock_key = f"slack:message:{event_ts}"
         
-        # Get the integration ID
-        integration_id = getattr(integration, "id", None)
-        if not integration_id:
-            print("No integration ID found")
-            return
-        
-        print(f"Processing for integration ID: {integration_id}")
-        
-        # Determine if this is a DM or channel message
-        is_dm = channel_type == "im" or (channel and channel.startswith("D"))
-        
-        # Get the user ID associated with this integration
-        metadata = getattr(integration, "integration_metadata", {}) or {}
-        print(f"Integration metadata: {metadata}")
-        
-        # First try to get the user ID from the metadata
-        integration_user_id = metadata.get("user_id")
-        app_user_id = metadata.get("app_user_id") or integration_user_id
-        
-        # If we still don't have a user ID, try to get it from other sources
-        if not integration_user_id:
-            # Try to get it from the integration object directly
-            integration_user_id = getattr(integration, "slack_user_id", None)
-            print(f"Using slack_user_id from integration object: {integration_user_id}")
-            
-            # If still no user ID, use the message sender as a last resort
-            if not integration_user_id:
-                integration_user_id = user
-                print(f"No user ID found in metadata or integration, using message sender: {integration_user_id}")
-        else:
-            print(f"Found user_id in metadata: {integration_user_id}")
-            
-        # For app_user_id (the ID we check for mentions), use the best available ID
-        if not app_user_id:
-            app_user_id = integration_user_id
-            print(f"Using integration_user_id as app_user_id for mention detection: {app_user_id}")
-        else:
-            print(f"Found app_user_id in metadata: {app_user_id}")
-        
-        # Check if the specific user linked to the app is mentioned in the message
-        is_app_user_mentioned = False
-        if app_user_id and f"<@{app_user_id}>" in text:
-            is_app_user_mentioned = True
-            print(f"App user <@{app_user_id}> is mentioned in the message")
-        
-        # Apply trigger logic:
-        # - For DMs: Always process
-        # - For channels: Only process if the specific user linked to the app is mentioned
-        should_trigger = is_dm or is_app_user_mentioned
-        
-        print(f"Message type: {'DM' if is_dm else 'Channel'}")
-        print(f"App user mentioned: {is_app_user_mentioned}")
-        print(f"Should trigger flow: {should_trigger}")
-        
-        if not should_trigger:
-            print("Skipping message - not a DM and app user not mentioned")
-            return
-            
-        # Get triggers for this integration
-        from langflow.services.database.models.integration_trigger.model import IntegrationTrigger
-        from sqlalchemy import select
-        
-        statement = select(IntegrationTrigger).where(
-            IntegrationTrigger.integration_id == integration_id
-        )
-        results = await db.execute(statement)
-        triggers = results.scalars().all()
-        
-        print(f"Found {len(triggers)} triggers for integration {integration_id}")
-        
-        # Process each trigger
-        for trigger in triggers:
-            try:
-                trigger_id = getattr(trigger, "id", None)
-                flow_id = getattr(trigger, "flow_id", None)
+        try:
+            async with slack_redis_lock(lock_key, timeout=60):
+                print(f"Channel: {channel}")
+                print(f"Channel Type: {channel_type}")
+                print(f"Text: {text}")
+                print(f"User: {user}")
                 
-                print(f"Processing trigger: {trigger_id} for flow: {flow_id}")
+                # Get the integration ID
+                integration_id = getattr(integration, "id", None)
+                if not integration_id:
+                    print("No integration ID found")
+                    return
                 
-                # Get the flow from the database
-                from langflow.helpers.flow import get_flow_by_id_or_endpoint_name
-                from langflow.api.v1.schemas import SimplifiedAPIRequest
+                print(f"Processing for integration ID: {integration_id}")
                 
-                # Get the flow by ID
-                flow = await get_flow_by_id_or_endpoint_name(flow_id_or_name=str(flow_id))
-                if not flow:
-                    print(f"Flow {flow_id} not found")
-                    continue
+                # Determine if this is a DM or channel message
+                is_dm = channel_type == "im" or (channel and channel.startswith("D"))
                 
-                # Create a structured JSON with event, message content, and metadata
-                import json
-                from uuid import UUID
+                # Get the user ID associated with this integration
+                metadata = getattr(integration, "integration_metadata", {}) or {}
+                print(f"Integration metadata: {metadata}")
                 
-                input_data = {
-                    "event": "New Slack Message Received",
-                    "message": {
-                        "content": text,
-                        "metadata": {
-                            "channel": channel,
-                            "channel_type": channel_type,
-                            "is_dm": is_dm,
-                            "app_user_mentioned": is_app_user_mentioned,
-                            "sender_id": user,
-                            "timestamp": event.get("ts"),
-                            "thread": event.get("thread_ts") or "Not in a thread",
-                            "team_id": event.get("team") or getattr(integration, "team_id", None)
-                        }
-                    }
-                }
+                # First try to get the user ID from the metadata
+                integration_user_id = metadata.get("user_id")
+                app_user_id = metadata.get("app_user_id") or integration_user_id
                 
-                # Convert to JSON string for the SimplifiedAPIRequest
-                # Add a default serializer function to handle UUID objects
-                input_value_str = json.dumps(input_data, default=lambda o: str(o) if isinstance(o, UUID) else None)
+                # If we still don't have a user ID, try to get it from other sources
+                if not integration_user_id:
+                    # Try to get it from the integration object directly
+                    integration_user_id = getattr(integration, "slack_user_id", None)
+                    print(f"Using slack_user_id from integration object: {integration_user_id}")
+                    
+                    # If still no user ID, use the message sender as a last resort
+                    if not integration_user_id:
+                        integration_user_id = user
+                        print(f"No user ID found in metadata or integration, using message sender: {integration_user_id}")
+                else:
+                    print(f"Found user_id in metadata: {integration_user_id}")
+                    
+                # For app_user_id (the ID we check for mentions), use the best available ID
+                if not app_user_id:
+                    app_user_id = integration_user_id
+                    print(f"Using integration_user_id as app_user_id for mention detection: {app_user_id}")
+                else:
+                    print(f"Found app_user_id in metadata: {app_user_id}")
                 
-                print(f"Sending input to flow: {input_value_str[:100]}...")
+                # Check if the specific user linked to the app is mentioned in the message
+                is_app_user_mentioned = False
+                if app_user_id and f"<@{app_user_id}>" in text:
+                    is_app_user_mentioned = True
+                    print(f"App user <@{app_user_id}> is mentioned in the message")
                 
-                input_request = SimplifiedAPIRequest(
-                    input_value=input_value_str,
-                    input_type="chat",
-                    output_type="chat"
+                # Apply trigger logic:
+                # - For DMs: Always process
+                # - For channels: Only process if the specific user linked to the app is mentioned
+                should_trigger = is_dm or is_app_user_mentioned
+                
+                print(f"Message type: {'DM' if is_dm else 'Channel'}")
+                print(f"App user mentioned: {is_app_user_mentioned}")
+                print(f"Should trigger flow: {should_trigger}")
+                
+                if not should_trigger:
+                    print("Skipping message - not a DM and app user not mentioned")
+                    return
+                    
+                # Get triggers for this integration
+                from langflow.services.database.models.integration_trigger.model import IntegrationTrigger
+                from sqlalchemy import select
+                
+                statement = select(IntegrationTrigger).where(
+                    IntegrationTrigger.integration_id == integration_id
                 )
+                results = await db.execute(statement)
+                triggers = results.scalars().all()
                 
-                # Execute the flow
-                print(f"Executing flow {flow_id} with input: {text}")
-                try:
-                    # Use the simple_run_flow function to execute the flow
-                    from langflow.api.v1.endpoints import simple_run_flow
-                    response = await simple_run_flow(
-                        flow=flow,
-                        input_request=input_request,
-                        stream=False
-                    )
-
-                    end_time = time.perf_counter()
-                    await telemetry_service.log_package_run(
-                        RunPayload(
-                            run_is_webhook=True,
-                            run_seconds=int(end_time - start_time),
-                            run_success=True,
-                            run_error_message=""
+                print(f"Found {len(triggers)} triggers for integration {integration_id}")
+                
+                # Process each trigger
+                for trigger in triggers:
+                    try:
+                        trigger_id = getattr(trigger, "id", None)
+                        flow_id = getattr(trigger, "flow_id", None)
+                        
+                        print(f"Processing trigger: {trigger_id} for flow: {flow_id}")
+                        
+                        # Get the flow from the database
+                        from langflow.helpers.flow import get_flow_by_id_or_endpoint_name
+                        from langflow.api.v1.schemas import SimplifiedAPIRequest
+                        
+                        # Get the flow by ID
+                        flow = await get_flow_by_id_or_endpoint_name(flow_id_or_name=str(flow_id))
+                        if not flow:
+                            print(f"Flow {flow_id} not found")
+                            continue
+                        
+                        # Create a structured JSON with event, message content, and metadata
+                        import json
+                        from uuid import UUID
+                        
+                        input_data = {
+                            "event": "New Slack Message Received",
+                            "message": {
+                                "content": text,
+                                "metadata": {
+                                    "channel": channel,
+                                    "channel_type": channel_type,
+                                    "is_dm": is_dm,
+                                    "app_user_mentioned": is_app_user_mentioned,
+                                    "sender_id": user,
+                                    "timestamp": event.get("ts"),
+                                    "thread": event.get("thread_ts") or "Not in a thread",
+                                    "team_id": event.get("team") or getattr(integration, "team_id", None)
+                                }
+                            }
+                        }
+                        
+                        # Convert to JSON string for the SimplifiedAPIRequest
+                        # Add a default serializer function to handle UUID objects
+                        input_value_str = json.dumps(input_data, default=lambda o: str(o) if isinstance(o, UUID) else None)
+                        
+                        print(f"Sending input to flow: {input_value_str[:100]}...")
+                        
+                        input_request = SimplifiedAPIRequest(
+                            input_value=input_value_str,
+                            input_type="chat",
+                            output_type="chat"
                         )
-                    )
+                        
+                        # Execute the flow
+                        print(f"Executing flow {flow_id} with input: {text}")
+                        try:
+                            # Use the simple_run_flow function to execute the flow
+                            from langflow.api.v1.endpoints import simple_run_flow
+                            response = await simple_run_flow(
+                                flow=flow,
+                                input_request=input_request,
+                                stream=False
+                            )
+
+                            end_time = time.perf_counter()
+                            await telemetry_service.log_package_run(
+                                RunPayload(
+                                    run_is_webhook=True,
+                                    run_seconds=int(end_time - start_time),
+                                    run_success=True,
+                                    run_error_message=""
+                                )
+                            )
+                            
+                            print(f"Flow execution completed: {response}")
+                            
+                        except Exception as e:
+                            print(f"Error executing flow {flow_id}: {str(e)}")
+                            traceback.print_exc()
                     
-                    print(f"Flow execution completed: {response}")
-                    
-                except Exception as e:
-                    print(f"Error executing flow {flow_id}: {str(e)}")
-                    traceback.print_exc()
-            
-            except Exception as e:
-                print(f"Error processing trigger {trigger_id}: {str(e)}")
-                traceback.print_exc()
-                
+                    except Exception as e:
+                        print(f"Error processing trigger {trigger_id}: {str(e)}")
+                        traceback.print_exc()
+        except Exception as e:
+            if "Lock already acquired" in str(e):
+                print(f"Skipping duplicate message processing: {event_ts}")
+            else:
+                raise
     except Exception as e:
         print(f"Error in process_slack_message: {str(e)}")
         traceback.print_exc()
-
 
 @router.post("/slack/watch/{integration_id}")
 async def watch_slack(

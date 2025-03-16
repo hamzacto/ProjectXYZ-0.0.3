@@ -85,7 +85,7 @@ class HubSpotDealUpdaterComponent(LCToolComponent):
             display_name="Deal ID",
             info="The ID of the deal to update.",
             value="",
-            required=True
+            required=False
         ),
         StrInput(
             name="dealname",
@@ -246,13 +246,24 @@ class HubSpotDealUpdaterComponent(LCToolComponent):
         company_id: str = "",
         contact_id: str = ""
     ) -> list[Data]:
-        # Validate and convert user_id into UUID if possible.
-        try:
-            user_uuid = UUID(self.user_id)
-        except Exception as e:
-            error_message = f"Invalid user_id provided: {e}"
-            logger.error(error_message)
-            return [Data(text=error_message)]
+        # First, try to use the user_id parameter if provided
+        user_id_to_use = self.user_id
+        
+        # Initialize user_id_uuid as None
+        user_id_uuid = None
+        
+        # Try to convert the user_id to UUID if it looks like a UUID
+        if user_id_to_use:
+            try:
+                # Only try to convert to UUID if it looks like one
+                if '-' in user_id_to_use and len(user_id_to_use) > 30:
+                    user_id_uuid = UUID(user_id_to_use)
+                    logger.info(f"Successfully converted user_id to UUID: {user_id_uuid}")
+                else:
+                    logger.warning(f"User ID doesn't appear to be in UUID format: {user_id_to_use}")
+            except ValueError as e:
+                logger.warning(f"Couldn't convert user_id to UUID: {user_id_to_use}, Error: {str(e)}")
+                # Continue without a UUID - we'll handle this case below
         
         # Validate deal_id
         if not deal_id:
@@ -271,12 +282,25 @@ class HubSpotDealUpdaterComponent(LCToolComponent):
 
         try:
             with Session(engine) as db:
-                tokens = db.exec(
-                    select(IntegrationToken).where(IntegrationToken.user_id == user_uuid)
-                ).all()
+                # Query for integration tokens with service_name 'hubspot'
+                # If we have a valid UUID, filter by user_id, otherwise get all HubSpot tokens
+                if user_id_uuid:
+                    logger.info(f"Querying for HubSpot tokens with user_id: {user_id_uuid}")
+                    tokens = db.exec(
+                        select(IntegrationToken).where(
+                            (IntegrationToken.user_id == user_id_uuid) & 
+                            (IntegrationToken.service_name.like("%hubspot%"))
+                        )
+                    ).all()
+                else:
+                    # If we don't have a UUID, just get all HubSpot tokens
+                    logger.info("Querying for all HubSpot tokens")
+                    tokens = db.exec(
+                        select(IntegrationToken).where(IntegrationToken.service_name.like("%hubspot%"))
+                    ).all()
 
                 if not tokens:
-                    error_message = "No token was found for this user."
+                    error_message = "No token was found."
                     logger.error(error_message)
                     return [Data(text=error_message)]
 

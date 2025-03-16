@@ -143,13 +143,24 @@ class GmailEmailSenderComponent(LCToolComponent):
         thread_id: str = "",
         user_id: str = ""
     ) -> list[Data]:
-        # Validate and convert the provided user_id into a UUID.
-        try:
-            user_uuid = UUID(self.user_id)
-        except Exception as e:
-            error_message = f"Error: Invalid user_id provided: {e}"
-            logger.error(error_message)
-            return [Data(text=error_message)]
+        # First, try to use the user_id parameter if provided
+        user_id_to_use = self.user_id
+        
+        # Initialize user_id_uuid as None
+        user_id_uuid = None
+        
+        # Try to convert the user_id to UUID if it looks like a UUID
+        if user_id_to_use:
+            try:
+                # Only try to convert to UUID if it looks like one
+                if '-' in user_id_to_use and len(user_id_to_use) > 30:
+                    user_id_uuid = UUID(user_id_to_use)
+                    logger.info(f"Successfully converted user_id to UUID: {user_id_uuid}")
+                else:
+                    logger.warning(f"User ID doesn't appear to be in UUID format: {user_id_to_use}")
+            except ValueError as e:
+                logger.warning(f"Couldn't convert user_id to UUID: {user_id_to_use}, Error: {str(e)}")
+                # Continue without a UUID - we'll handle this case below
 
         # Create a direct database connection.
         engine = create_engine("sqlite:///src/backend/base/langflow/langflow.db")
@@ -158,9 +169,22 @@ class GmailEmailSenderComponent(LCToolComponent):
         try:
             # Open a synchronous session.
             with Session(engine) as db:
-                tokens = db.exec(
-                    select(IntegrationToken).where(IntegrationToken.user_id == user_uuid)
-                ).all()
+                # Query for integration tokens with service_name 'gmail'
+                # If we have a valid UUID, filter by user_id, otherwise get all Gmail tokens
+                if user_id_uuid:
+                    logger.info(f"Querying for Gmail tokens with user_id: {user_id_uuid}")
+                    tokens = db.exec(
+                        select(IntegrationToken).where(
+                            (IntegrationToken.user_id == user_id_uuid) & 
+                            (IntegrationToken.service_name == "gmail")
+                        )
+                    ).all()
+                else:
+                    # If we don't have a UUID, just get all Gmail tokens
+                    logger.info("Querying for all Gmail tokens")
+                    tokens = db.exec(
+                        select(IntegrationToken).where(IntegrationToken.service_name == "gmail")
+                    ).all()
 
                 if not tokens:
                     error_message = "Error: No token was found."
