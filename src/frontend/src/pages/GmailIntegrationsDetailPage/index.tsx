@@ -45,8 +45,11 @@ export default function GmailIntegrationsDetailPage() {
         setError(null);
         try {
             const response = await axiosInstance.get('/integration/status');
-            setIntegrations(response.data.integrations);
-            setGmailConnected(response.data.integrations.length > 0);
+            const gmailIntegrations = response.data.integrations.filter(
+                (integration: IntegrationDetails) => integration.service_name === 'gmail'
+            );
+            setIntegrations(gmailIntegrations);
+            setGmailConnected(gmailIntegrations.length > 0);
         } catch (err) {
             setError('Failed to fetch integrations');
             console.error(err);

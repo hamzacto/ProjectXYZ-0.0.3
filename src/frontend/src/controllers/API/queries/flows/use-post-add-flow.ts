@@ -15,6 +15,7 @@ interface IPostAddFlow {
   endpoint_name: string | undefined;
   icon: string | undefined;
   gradient: string | undefined;
+  wizard_metadata: Record<string, any> | undefined;
 }
 
 export const usePostAddFlow: useMutationFunctionType<
@@ -34,6 +35,7 @@ export const usePostAddFlow: useMutationFunctionType<
       icon: payload.icon || null,
       gradient: payload.gradient || null,
       endpoint_name: payload.endpoint_name || null,
+      wizard_metadata: payload.wizard_metadata || null,
     });
     return response.data;
   };

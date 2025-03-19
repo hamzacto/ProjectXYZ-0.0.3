@@ -27,15 +27,26 @@ from langflow.services.database.models.folder.constants import DEFAULT_FOLDER_NA
 from langflow.services.database.models.folder.model import Folder
 from langflow.services.deps import get_settings_service
 from langflow.services.settings.service import SettingsService
+from langflow.services.database.models.flow_wizard_metadata.model import (
+    FlowWizardMetadataCreate,
+)
+from langflow.services.database.models.flow_wizard_metadata.utils import (
+    create_flow_wizard_metadata,
+)
 
 # build router
 router = APIRouter(prefix="/flows", tags=["Flows"])
+
+# Define a new FlowCreate model just for API purposes
+class ApiFlowCreate(FlowCreate):
+    """Extended FlowCreate model for API use only."""
+    wizard_metadata: dict | None = None
 
 
 async def _new_flow(
     *,
     session: AsyncSession,
-    flow: FlowCreate,
+    flow: ApiFlowCreate,
     user_id: UUID,
 ):
     try:
@@ -117,13 +128,28 @@ async def _new_flow(
 async def create_flow(
     *,
     session: DbSession,
-    flow: FlowCreate,
+    flow: ApiFlowCreate,
     current_user: CurrentActiveUser,
 ):
     try:
         db_flow = await _new_flow(session=session, flow=flow, user_id=current_user.id)
         await session.commit()
         await session.refresh(db_flow)
+        
+        print("wizard_metadata", flow.wizard_metadata)
+        # Create flow wizard metadata if it's provided
+        if hasattr(flow, 'wizard_metadata') and flow.wizard_metadata:
+            try:
+                metadata_create = FlowWizardMetadataCreate(
+                    flow_id=db_flow.id,
+                    metadata=flow.wizard_metadata
+                )
+                await create_flow_wizard_metadata(session, metadata_create)
+                await session.commit()
+            except Exception as metadata_error:
+                # Log the error but don't fail the whole flow creation
+                print(f"Error creating flow wizard metadata: {str(metadata_error)}")
+                
     except Exception as e:
         if "UNIQUE constraint failed" in str(e):
             # Get the name of the column that failed
@@ -304,6 +330,7 @@ async def update_flow(
             # or UNIQUE constraint failed: flow.name
             # if the column has id in it, we want the other column
             column = columns.split(",")[1] if "id" in columns.split(",")[0] else columns.split(",")[0]
+
             raise HTTPException(
                 status_code=400, detail=f"{column.capitalize().replace('_', ' ')} must be unique"
             ) from e

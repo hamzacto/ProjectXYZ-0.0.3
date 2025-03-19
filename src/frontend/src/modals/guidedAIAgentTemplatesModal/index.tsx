@@ -1634,8 +1634,52 @@ export default function GuidedAIAgentTemplatesModal({
             withCredentials: true
         });
 
-        // Save the updated flow and setup triggers
-        addFlow({ flow: updatedFlow, override: false }).then((flowId) => {
+        // Store wizard metadata to help users edit their flow later
+        const wizardMetadata = {
+            type: "guided_agent",
+            name,
+            description,
+            prompt,
+            tools: addedTools.map(tool => ({ 
+                id: tool.key || tool.display_name,
+                name: tool.display_name,
+                type: tool.display_name
+            })),
+            subagents: addedSubagents.map(subagent => ({
+                id: subagent.id,
+                name: subagent.name,
+                description: subagent.description || ""
+            })),
+            knowledgeBase: {
+                collectionName,
+                categories: fileCategories.map(cat => ({
+                    id: cat.id,
+                    name: cat.name,
+                    fileCount: cat.files.length
+                }))
+            },
+            triggers: selectedTriggers,
+            flowBuilder: nodes.length > 1 ? {
+                nodes: nodes.map(node => ({
+                    id: node.id,
+                    type: node.type,
+                    data: {
+                        instruction: node.data?.instruction
+                    }
+                })),
+                edges
+            } : null,
+            advancedSettings
+        };
+
+        console.log("wizardMetadata", wizardMetadata);
+
+        // Save the updated flow with metadata
+        addFlow({ 
+            flow: updatedFlow, 
+            wizard_metadata: wizardMetadata, 
+            override: false 
+        }).then((flowId) => {
             // Setup triggers for the new flow using the flowId
             for (const triggerInfo of selectedTriggers) {
                 try {
@@ -1709,7 +1753,6 @@ export default function GuidedAIAgentTemplatesModal({
     ];
 
     const defaultViewport: Viewport = { x: 5, y: 15, zoom: 1 };
-
 
     return (
         <GuidedAgentModal size="x-large" open={open} setOpen={setOpen} className="p-0">

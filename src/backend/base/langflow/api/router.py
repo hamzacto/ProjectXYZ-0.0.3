@@ -6,6 +6,7 @@ from langflow.api.v1 import (
     chat_router,
     endpoints_router,
     files_router,
+    flow_wizard_metadata_router,
     flows_router,
     folders_router,
     login_router,
@@ -50,3 +51,4 @@ router.include_router(integrations_router)
 router.include_router(vectorstore_router)
 router.include_router(slack_integrations_router)
 router.include_router(hubspot_integrations_router)
+router.include_router(flow_wizard_metadata_router)

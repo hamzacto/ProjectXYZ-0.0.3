@@ -25,6 +25,20 @@ if config.config_file_name is not None:
 # target_metadata = mymodel.Base.metadata
 target_metadata = SQLModel.metadata
 
+# Tables to exclude from migration detection
+# This allows us to define models that don't need to be created in the database
+EXCLUDE_TABLES = ['file', 'emailthread', 'processedemail']
+
+def include_object(object, name, type_, reflected, compare_to):
+    """
+    Controls which database objects are included in the comparison and migration.
+    
+    This function is passed to context.configure() with include_object parameter.
+    """
+    if type_ == 'table' and name in EXCLUDE_TABLES:
+        return False
+    return True
+
 # other values from the config, defined by the needs of env.py,
 # can be acquired:
 # my_important_option = config.get_main_option("my_important_option")
@@ -50,6 +64,7 @@ def run_migrations_offline() -> None:
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         render_as_batch=True,
+        include_object=include_object
     )
 
     with context.begin_transaction():
@@ -72,7 +87,7 @@ def _sqlite_do_begin(conn):
 
 
 def _do_run_migrations(connection):
-    context.configure(connection=connection, target_metadata=target_metadata, render_as_batch=True)
+    context.configure(connection=connection, target_metadata=target_metadata, render_as_batch=True, include_object=include_object)
 
     with context.begin_transaction():
         if connection.dialect.name == "postgresql":
@@ -121,7 +136,8 @@ def run_migrations_online() -> None:
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
-            render_as_batch=True
+            render_as_batch=True,
+            include_object=include_object
         )
 
         with context.begin_transaction():

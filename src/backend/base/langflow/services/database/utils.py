@@ -12,11 +12,17 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 if TYPE_CHECKING:
     from langflow.services.database.service import DatabaseService
 
+# Import the model disabling utilities
+from langflow.services.database.models.disable_models import disable_migration_models, restore_migration_models
+
 
 async def initialize_database(*, fix_migration: bool = False) -> None:
     logger.debug("Initializing database")
     from langflow.services.deps import get_db_service
 
+    # Disable problematic models before running migrations
+    disable_migration_models()
+    
     database_service: DatabaseService = get_db_service()
     try:
         if database_service.settings_service.settings.database_connection_retry:
@@ -58,6 +64,9 @@ async def initialize_database(*, fix_migration: bool = False) -> None:
         if "already exists" not in str(exc):
             logger.exception(exc)
         raise
+    finally:
+        # Restore the models after migrations
+        restore_migration_models()
     logger.debug("Database initialized")
 
 
