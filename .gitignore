@@ -160,3 +160,17 @@ cython_debug/
 #.idea/
 client_secret.json
 token.json
+src/backend/base/langflow/langflow.db-shm
+src/backend/base/langflow/langflow.db-shm
+src/backend/base/langflow/langflow.db-wal
+database.db
+database.db
+database.db-wal
+database.db-shm
+langflow.db.backup_20250312_230749
+src/backend/base/create_wizard_metadata_table.py
+src/backend/base/ensure_wizard_metadata_table.py
+src/backend/base/langflow/alembic/versions/6049ac734dc9_skip_table_migrations.py
+src/backend/base/langflow/alembic/versions/6242c5522375_rename_metadata_to_wizard_metadata_in_.py
+src/backend/base/langflow/alembic/versions/add_flow_wizard_metadata.py
+src/backend/base/langflow/alembic/versions/d5457f1e9873_add_email_and_file_tables.py
