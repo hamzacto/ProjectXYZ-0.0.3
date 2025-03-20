@@ -22,7 +22,7 @@ import GuidedAgentTriggers from "../templatesModal/components/GuidedAgentTrigger
 import GuidedAgentAIAgentAdvancedSettings from "../templatesModal/components/GuidedAgentAIAgentAdvancedSettings";
 import { Background, Edge, Panel, ReactFlowProvider, SelectionMode, useEdgesState, useNodesState, useReactFlow } from "@xyflow/react";
 import { v4 as uuidv4 } from 'uuid';
-import { FileCategory } from "../templatesModal/components/GuidedAgentkhowledgeBase/types";
+import { FileCategory, FileItem } from "../templatesModal/components/GuidedAgentkhowledgeBase/types";
 import GuidedAgentModal from "../guidedAgentModal";
 import CreateAIAgentComponent from "../templatesModal/components/CreateGuidedAIAgentComponent";
 import {
@@ -40,6 +40,7 @@ import StartPointNode from "../templatesModal/components/guidedAgentFlowBuilder/
 import { Button } from "@/components/ui/button";
 import { Category } from "@/types/templates/types";
 import axios from "axios";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 
 export default function FlowSettingsModal({
   open,
@@ -92,6 +93,8 @@ export default function FlowSettingsModal({
     { id: 'default', name: 'General', files: [] }
 ]);
   const [activeCategory, setActiveCategory] = useState('default');
+  const [fileToDelete, setFileToDelete] = useState<string | null>(null);
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   type AdvancedSettings = {
     temperature: number;
     modelName: string;
@@ -168,7 +171,7 @@ export default function FlowSettingsModal({
   const handleZoomOut = useCallback(() => zoomOut(), [zoomOut]);
   const handleFitView = useCallback(() => fitView(), [fitView]);
   const axiosInstance = axios.create({
-    baseURL: 'http://localhost:3000/api/v1', // Adjust to match your API base URL
+    baseURL: 'http://localhost:3000/api/v1', 
     headers: {
       'Content-Type': 'application/json',
     },
@@ -853,8 +856,8 @@ Instructions:
     }
   }
 
-  async function insertFilesIntoDatabase(fileCategories: any[], collectionName: string) {
-    const files: any[] = [];
+  async function insertFilesIntoDatabase(fileCategories: FileCategory[], collectionName: string) {
+    const files: FileItem[] = [];
     fileCategories.forEach((cat) => {
       files.push(...cat.files);
     });
@@ -880,6 +883,55 @@ Instructions:
     }
     await Promise.all(executing);
   }
+
+  async function deleteFileFromDatabase(fileId: string, collectionName: string) {
+    try {
+      // Call the backend API to delete the file from Milvus
+      const { data } = await axiosInstance.delete(`/milvus/files/${collectionName}/${fileId}`);
+      console.log(`File ${fileId} deleted from collection ${collectionName}:`, data);
+      return true;
+    } catch (error) {
+      console.error(`Error deleting file ${fileId} from collection ${collectionName}:`, error);
+      return false;
+    }
+  }
+
+  const handleDeleteFile = async (fileId: string) => {
+    if (!fileId) return;
+    
+    try {
+      // If we have a flow ID, try to get the collection name from the wizard metadata
+      let collectionName = "";
+      if (flowData?.id) {
+        try {
+          const metadata = await getFlowWizardMetadata(flowData.id);
+          collectionName = metadata?.collectionName || "";
+        } catch (error) {
+          console.error("Error fetching collection name:", error);
+        }
+      }
+
+      // If we have a collection name, delete the file from the database
+      if (collectionName) {
+        await deleteFileFromDatabase(fileId, collectionName);
+      }
+
+      // Update the UI state to remove the file
+      setFileCategories((prevCategories: FileCategory[]) =>
+        prevCategories.map((category) => ({
+          ...category,
+          files: category.files.filter((file) => file.id !== fileId),
+        }))
+      );
+    } catch (error) {
+      console.error("Error deleting file:", error);
+      setErrorData({
+        title: "Error deleting file",
+        list: [(error as Error).message || "An unknown error occurred"],
+      });
+    }
+  };
+
   const handleDeleteNode = useCallback(
     (nodeId) => {
       // Find edges that involve the node being deleted
@@ -996,7 +1048,6 @@ Instructions:
     [edges, setNodes, setEdges]
   );
 
-
   const onConnect = useCallback((params: any) => {
     setEdges((eds) => [...eds, { ...params, type: 'default' }]);
   }, [setEdges]);
@@ -1062,12 +1113,62 @@ Instructions:
       if (flowData && flowData.id) {
         // Process and save any files in the knowledge base
         if (fileCategories && fileCategories.length > 0) {
-          // Use the collection name for Milvus
-          getFlowWizardMetadata(flowData.id).then((metadata) => {
+          try {
+            // Get the metadata to compare files
+            const metadata = await getFlowWizardMetadata(flowData.id);
             const collectionName = metadata?.collectionName || "";
-          });
-          // Insert files into the database
-          insertFilesIntoDatabase(fileCategories, collectionName);
+            
+            if (collectionName) {
+              // Get existing files from metadata
+              const existingFiles = metadata?.knowledgeBase?.categories?.flatMap(
+                category => category.files
+              ) || [];
+
+              // Get current files from state
+              const currentFiles = fileCategories.flatMap(
+                category => category.files
+              );
+
+              // Find files to delete (files that exist in metadata but not in current state)
+              const filesToDelete = existingFiles.filter(
+                existingFile => !currentFiles.some(
+                  currentFile => currentFile.id === existingFile.id
+                )
+              );
+
+              // Find files to upload (files that exist in current state but not in metadata)
+              const filesToUpload = currentFiles.filter(
+                currentFile => !existingFiles.some(
+                  existingFile => existingFile.id === currentFile.id
+                )
+              );
+
+              // Delete files that are no longer present
+              for (const file of filesToDelete) {
+                try {
+                  await deleteFileFromDatabase(file.id, collectionName);
+                } catch (error) {
+                  console.error(`Error deleting file ${file.id}:`, error);
+                }
+              }
+
+              // Upload new files
+              for (const file of filesToUpload) {
+                try {
+                  const tempCategory = {
+                    id: 'temp',
+                    name: 'temp',
+                    files: [file]
+                  };
+                  await insertFilesIntoDatabase([tempCategory], collectionName);
+                } catch (error) {
+                  console.error(`Error uploading file ${file.id}:`, error);
+                }
+              }
+            }
+          } catch (error) {
+            console.error("Error processing files:", error);
+          }
         }
 
         // Use provided onUpdate function or fallback to saveFlow
@@ -1086,17 +1187,18 @@ Instructions:
         // Then update the wizard metadata
         const wizardMetadataToSave = {
           prompt,
+          collectionName: collectionName,
           tools: addedTools,
           subagents: addedSubagents,
-          triggers: selectedTriggers,
           knowledgeBase: {
             categories: fileCategories
           },
-          advancedSettings,
+          triggers: selectedTriggers,
           flowBuilder: {
             nodes,
             edges
-          }
+          },
+          advancedSettings,
         };
 
         await updateFlowWizardMetadata(flowData.id, wizardMetadataToSave);
@@ -1109,7 +1211,6 @@ Instructions:
         // Close the modal
         setOpen(false);
       }
-
     } catch (error) {
       console.error("Error updating flow:", error);
       // Show error message
@@ -1171,7 +1272,7 @@ Instructions:
   };
 
   // Callback for file updates in knowledge base
-  const handleFilesUpdate = (files: any[]) => {
+  const handleFilesUpdate = (files: FileItem[]) => {
     // Update the files for the active category
     setFileCategories(prev =>
       prev.map(category =>

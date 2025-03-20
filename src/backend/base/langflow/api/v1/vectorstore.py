@@ -116,6 +116,7 @@ async def create_collection(collection_name: str):
             FieldSchema(name="id", dtype=DataType.INT64, is_primary=True, auto_id=True),
             FieldSchema(name="text", dtype=DataType.VARCHAR, max_length=7000),
             FieldSchema(name="embedding", dtype=DataType.FLOAT_VECTOR, dim=1536),
+            FieldSchema(name="file_id", dtype=DataType.VARCHAR, max_length=100),
         ]
 
         schema = CollectionSchema(fields, description="Example collection schema for Langflow RAG")
@@ -140,3 +141,43 @@ async def create_collection(collection_name: str):
         return {"message": f"Collection '{collection_name}' created successfully with schema and index."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.delete("/milvus/files/{collection_name}/{file_id}", status_code=status.HTTP_200_OK)
+async def delete_file_from_collection(collection_name: str, file_id: str):
+    """
+    Delete all documents associated with a specific file_id from a Milvus collection.
+    """
+    try:
+        # Get the collection
+        collection = Collection(name=collection_name)
+        
+        # Load the collection
+        collection.load()
+        
+        # Create a query expression to find all documents with the given file_id
+        expr = f'file_id == "{file_id}"'
+        
+        # Execute the query to get the IDs of documents to delete
+        results = collection.query(expr=expr, output_fields=["id"])
+        
+        if not results:
+            return {"message": f"No documents found with file_id '{file_id}' in collection '{collection_name}'"}
+        
+        # Extract the IDs to delete
+        ids_to_delete = [result["id"] for result in results]
+        
+        # Delete the documents
+        collection.delete(f"id in {ids_to_delete}")
+        
+        # Flush to ensure changes are committed
+        collection.flush()
+        
+        return {
+            "message": f"Successfully deleted {len(ids_to_delete)} documents with file_id '{file_id}' from collection '{collection_name}'"
+        }
+    except Exception as e:
+        logger.error(f"Error deleting file from collection: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error deleting file from collection: {str(e)}"
+        )

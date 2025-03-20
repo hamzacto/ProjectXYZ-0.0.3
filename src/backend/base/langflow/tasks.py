@@ -122,7 +122,11 @@ def process_file_task(self, file_data: dict):
         documents = []
         batch_size = file_data.get("batch_size", 50)
         for idx, chunk in enumerate(chunks):
-            documents.append(Document(page_content=chunk, metadata={"file_name": file_data["name"], "chunk_index": idx}))
+            documents.append(Document(page_content=chunk, metadata={
+                "file_name": file_data["name"], 
+                "chunk_index": idx,
+                "file_id": file_data["id"]  # Add file_id to metadata
+            }))
             
             # When a batch is ready, insert and update progress.
             if (idx + 1) % batch_size == 0:
