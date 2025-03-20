@@ -61,7 +61,7 @@ export default function KnowledgeBaseFilesUpload({
     setFileCategories((prevCategories) =>
       prevCategories.map((category) => ({
         ...category,
-        files: category.files.map((file) =>
+        files: category.files?.map((file) =>
           file.id === fileId ? { ...file, ...newProps } : file
         ),
       }))
@@ -99,7 +99,7 @@ export default function KnowledgeBaseFilesUpload({
         setFileCategories((prevCategories) =>
           prevCategories.map((category) =>
             category.id === activeCategory
-              ? { ...category, files: [...category.files, newFile] }
+              ? { ...category, files: [...(category.files || []), newFile] }
               : category
           )
         );

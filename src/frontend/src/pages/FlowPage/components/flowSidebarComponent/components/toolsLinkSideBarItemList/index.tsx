@@ -24,6 +24,13 @@ const ToolsLinkSidebarItemsList: React.FC<ToolsLinkSidebarItemsListProps> = ({
     addedTools,
     addTool,
 }) => {
+    // Helper function to check if a tool is already added
+    const isToolAdded = (tool: any) => {
+        return addedTools.some(addedTool => 
+            addedTool.display_name === tool.display_name
+        );
+    };
+
     return (
         <div className="flex flex-col gap-1 py-2">
             {Object.keys(dataFilter[item.name])
@@ -36,7 +43,7 @@ const ToolsLinkSidebarItemsList: React.FC<ToolsLinkSidebarItemsListProps> = ({
                 })
                 .map((SBItemName, idx) => {
                     const currentItem = dataFilter[item.name][SBItemName];
-                    const isAdded = addedTools.includes(currentItem);
+                    const isAdded = isToolAdded(currentItem);
 
                     return (
                         <ToolsLinkSidebarDraggableComponent

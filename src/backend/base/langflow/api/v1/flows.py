@@ -142,7 +142,7 @@ async def create_flow(
             try:
                 metadata_create = FlowWizardMetadataCreate(
                     flow_id=db_flow.id,
-                    metadata=flow.wizard_metadata
+                    wizard_metadata=flow.wizard_metadata
                 )
                 await create_flow_wizard_metadata(session, metadata_create)
                 await session.commit()

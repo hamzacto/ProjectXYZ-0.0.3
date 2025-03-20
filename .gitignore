@@ -174,3 +174,4 @@ src/backend/base/langflow/alembic/versions/6049ac734dc9_skip_table_migrations.py
 src/backend/base/langflow/alembic/versions/6242c5522375_rename_metadata_to_wizard_metadata_in_.py
 src/backend/base/langflow/alembic/versions/add_flow_wizard_metadata.py
 src/backend/base/langflow/alembic/versions/d5457f1e9873_add_email_and_file_tables.py
+src/backend/base/run_flow_wizard_migration.py

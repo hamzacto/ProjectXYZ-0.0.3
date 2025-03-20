@@ -72,26 +72,15 @@ const useAddFlow = () => {
       const newName = addVersionToDuplicates(newFlow, flowsToCheckNames ?? []);
       newFlow.name = newName;
       newFlow.folder_id = folder_id;
-
-      // Replace components calculation with valid empty object to avoid type error
-      // const components = await extractFieldsFromComponenents(flowData?.nodes);
       const sendFlow = {
-        name: flow?.name ?? "New Flow",
-        description: flow?.description ?? "",
-        data: flowData || { nodes: [], edges: [], viewport: { zoom: 1, x: 0, y: 0 } },
-        folder_id:
-          folderId ?? flow?.folder_id ?? flow?.folder_id ?? myCollectionId ?? "",
-        is_component: flow?.is_component ?? false,
-        endpoint_name: flow?.endpoint_name || "Untitled_" + Math.random().toString(36).substring(2, 6),
-        icon: flow?.icon || undefined,
-        gradient: flow?.gradient || undefined,
+        ...newFlow,
         wizard_metadata: params?.wizard_metadata || undefined,
       };
-
       postAddFlow(sendFlow, {
         onSuccess: (createdFlow) => {
           // Add the new flow to the list of flows.
           const { data, flows: myFlows } = processFlows([
+            createdFlow,
             createdFlow,
             ...(flows ?? []),
           ]);

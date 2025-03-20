@@ -1640,10 +1640,12 @@ export default function GuidedAIAgentTemplatesModal({
             name,
             description,
             prompt,
+            collectionName,
             tools: addedTools.map(tool => ({ 
                 id: tool.key || tool.display_name,
-                name: tool.display_name,
-                type: tool.display_name
+                display_name: tool.display_name,
+                type: tool.display_name,
+                icon: tool.icon
             })),
             subagents: addedSubagents.map(subagent => ({
                 id: subagent.id,
@@ -1655,7 +1657,7 @@ export default function GuidedAIAgentTemplatesModal({
                 categories: fileCategories.map(cat => ({
                     id: cat.id,
                     name: cat.name,
-                    fileCount: cat.files.length
+                    files: cat.files
                 }))
             },
             triggers: selectedTriggers,
