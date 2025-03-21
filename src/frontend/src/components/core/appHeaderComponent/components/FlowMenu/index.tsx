@@ -92,11 +92,23 @@ export const MenuBar = ({}: {}): JSX.Element => {
   const changesNotSaved =
     customStringify(currentFlow) !== customStringify(currentSavedFlow);
 
+  // useEffect(() => {
+  //   const defaultWidth = flowName ? flowName.length * 8 + 20 : 100;
+  //   setInputWidth(defaultWidth);
+    
+  //   if (measureRef.current) {
+  //     setInputWidth(measureRef.current.offsetWidth + 10);
+  //   }
+  // }, [flowName]);
+
   useEffect(() => {
-    if (measureRef.current) {
-      setInputWidth(measureRef.current.offsetWidth);
+    if (currentFlow) {
+      setFlowName(currentFlow.name);
+      
+      const defaultWidth = currentFlow.name ? currentFlow.name.length * 8 : 100;
+      setInputWidth(defaultWidth);
     }
-  }, [flowName]);
+  }, [currentFlow]);
 
   function handleAddFlow() {
     try {
@@ -221,12 +233,6 @@ export const MenuBar = ({}: {}): JSX.Element => {
       setFlowName(currentFlow.name);
     }
   }, [currentFlow, editingName]);
-
-  useEffect(() => {
-    if (measureRef.current) {
-      setInputWidth(measureRef.current.offsetWidth + 10);
-    }
-  }, [flowName]);
 
   return currentFlow && onFlowPage ? (
     <div
@@ -468,6 +474,8 @@ export const MenuBar = ({}: {}): JSX.Element => {
         <FlowSettingsModal
           open={openSettings}
           setOpen={setOpenSettings}
+          flowData={currentFlow}
+          nameLists={nameLists}
         ></FlowSettingsModal>
         <FlowLogsModal open={openLogs} setOpen={setOpenLogs}></FlowLogsModal>
       </div>

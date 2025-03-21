@@ -1,12 +1,12 @@
 import useSaveFlow from "@/hooks/flows/use-save-flow";
 import useAlertStore from "@/stores/alertStore";
 import useFlowStore from "@/stores/flowStore";
+import useFlowsManagerStore from "@/stores/flowsManagerStore";
 import { cloneDeep } from "lodash";
 import { useCallback, useEffect, useRef, useState } from "react";
 import IconComponent, { ForwardedIconComponent } from "../../components/common/genericIconComponent";
 import EditFlowSettings from "../../components/core/editFlowSettingsComponent";
 import { SETTINGS_DIALOG_SUBTITLE } from "../../constants/constants";
-import useFlowsManagerStore from "../../stores/flowsManagerStore";
 import { FlowSettingsPropsType } from "../../types/components";
 import { FlowType } from "../../types/flow";
 import { isEndpointNameValid } from "../../utils/utils";
@@ -62,11 +62,10 @@ export default function FlowSettingsModal({
 }) {
   const saveFlow = useSaveFlow();
   const currentFlow = useFlowStore((state) => state.currentFlow);
-  const setCurrentFlow = useFlowStore((state) => state.setCurrentFlow);
+  const setCurrentFlowInManager = useFlowsManagerStore((state) => state.setCurrentFlow);
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
   const setErrorData = useAlertStore((state) => state.setErrorData);
   const flows = useFlowsManagerStore((state) => state.flows);
-
   // Ensure flowData is defined by using nullish coalescing with an empty object
   const flow = flowData ?? currentFlow;
   useEffect(() => {
@@ -1202,7 +1201,18 @@ Instructions:
         };
 
         await updateFlowWizardMetadata(flowData.id, wizardMetadataToSave);
-
+        
+        // Create updated flow data
+        const updatedFlowData = {
+          ...flowData,
+          name,
+          description,
+          endpoint_name
+        };
+        
+        // Update the FlowsManagerStore which will update both currentFlow and currentFlowId
+        setCurrentFlowInManager(updatedFlowData);
+        
         // Show success message
         setSuccessData({
           title: "Flow updated successfully",
@@ -1418,6 +1428,7 @@ Instructions:
                   addedSubagents={addedSubagents}
                   addSubagent={handleAddSubagent}
                   deleteSubagent={handleDeleteSubagent}
+                  activeAgent={flow?.id ?? null}
                 />
               ) : currentTab === "triggers" ? (
                 <GuidedAgentTriggers

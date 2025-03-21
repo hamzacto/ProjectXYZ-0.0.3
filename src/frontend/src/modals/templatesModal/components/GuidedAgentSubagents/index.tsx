@@ -9,12 +9,14 @@ interface GuidedAgentSubagentsProps {
     addedSubagents: any[];
     addSubagent: (subagent: any) => void;
     deleteSubagent: (subagent: any) => void;
+    activeAgent: string | null;
 }
 
 export default function GuidedAgentSubagents({
     addedSubagents = [],
     addSubagent,
-    deleteSubagent
+    deleteSubagent,
+    activeAgent
 }: GuidedAgentSubagentsProps) {
     const flows = useFlowsManagerStore((state) => state.flows);
     
@@ -25,9 +27,10 @@ export default function GuidedAgentSubagents({
         // Filter out any flows that are already added as subagents
         // And ignore the current flow being created
         return (flows ?? []).filter(flow => 
+            flow.id !== activeAgent &&
             !addedSubagents.some(subagent => subagent.id === flow.id)
         );
-    }, [flows, addedSubagents]);
+    }, [flows, addedSubagents, activeAgent]);
 
     const handleAddSubagent = useCallback(
         (subagent: any) => {

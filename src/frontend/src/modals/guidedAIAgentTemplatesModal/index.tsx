@@ -1665,6 +1665,7 @@ export default function GuidedAIAgentTemplatesModal({
                 nodes: nodes.map(node => ({
                     id: node.id,
                     type: node.type,
+                    position: node.position,
                     data: {
                         instruction: node.data?.instruction
                     }
@@ -1891,6 +1892,7 @@ export default function GuidedAIAgentTemplatesModal({
                                     addedSubagents={addedSubagents}
                                     addSubagent={handleAddSubagent}
                                     deleteSubagent={handleDeleteSubagent}
+                                    activeAgent={null}
                                 />
                             ) : (
                                 <TemplateContentComponent
