@@ -8,7 +8,7 @@ import IconComponent, { ForwardedIconComponent } from "../../components/common/g
 import EditFlowSettings from "../../components/core/editFlowSettingsComponent";
 import { SETTINGS_DIALOG_SUBTITLE } from "../../constants/constants";
 import { FlowSettingsPropsType } from "../../types/components";
-import { FlowType } from "../../types/flow";
+import { AllNodeType, FlowType } from "../../types/flow";
 import { isEndpointNameValid } from "../../utils/utils";
 import BaseModal from "../baseModal";
 import { useFlowWizardMetadata } from "@/hooks/flows/use-flow-wizard-metadata";
@@ -41,6 +41,8 @@ import { Button } from "@/components/ui/button";
 import { Category } from "@/types/templates/types";
 import axios from "axios";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { handleDeleteNode, handleInputChange, handleAddNode, transformFlowToPrompt } from "./reactFlowUtils";
+import { insertFile, deleteFileFromDatabase, insertFilesIntoDatabase } from "./fileUtils";
 
 export default function FlowSettingsModal({
   open,
@@ -147,9 +149,9 @@ export default function FlowSettingsModal({
       data: {
         label: 'Start Node',
         instruction: '', // Placeholder for user input
-        onAddNode: (nodeType) => handleAddNode('1', nodeType), // Dynamically handle node addition
-        onInputChange: (nodeId, newValue) => handleInputChange(nodeId, newValue), // Handle input changes
-        onDeleteNode: () => handleDeleteNode('1'), // Dynamically handle node deletion
+        onAddNode: (nodeType) => handleAddNode('1', nodeType, nodes, edges, setNodes, setEdges), // Dynamically handle node addition
+        onInputChange: (nodeId, newValue) => handleInputChange(nodeId, newValue, setNodes), // Handle input changes
+        onDeleteNode: () => handleDeleteNode('1', nodes, edges, setNodes, setEdges), // Dynamically handle node deletion
       },
     },
   ];
@@ -195,857 +197,6 @@ export default function FlowSettingsModal({
     );
   };
 
-  // Helper function to find all descendants of a node
-  const findDescendants = (nodeId, allEdges) => {
-    const descendants: string[] = [];
-    const stack = [nodeId];
-
-    while (stack.length > 0) {
-      const currentId = stack.pop();
-      descendants.push(currentId);
-
-      // Find edges where currentId is the source
-      const childEdges = allEdges.filter((edge) => edge.source === currentId);
-      childEdges.forEach((edge) => stack.push(edge.target));
-    }
-
-    return descendants;
-  };
-
-  const findDescendantsNodes = (nodeId, allEdges, allNodes) => {
-    const descendants: typeof allNodes = [];
-    const stack = [nodeId];
-
-    while (stack.length > 0) {
-      const currentId = stack.pop();
-
-      // Add the node corresponding to the currentId to the descendants list
-      const currentNode = allNodes.find((node) => node.id === currentId);
-      if (currentNode && !descendants.some((node) => node.id === currentNode.id)) {
-        descendants.push(currentNode);
-      }
-
-      // Find edges where currentId is the source
-      const childEdges = allEdges.filter((edge) => edge.source === currentId);
-      childEdges.forEach((edge) => stack.push(edge.target));
-    }
-
-    return descendants;
-  };
-
-  function findAncestors(
-    nodeId: string,
-    edges: { source: string; target: string }[],
-    nodes: { id: string }[]
-  ): { id: string }[] {
-    const ancestors: { id: string }[] = [];
-
-    function traverse(currentNodeId: string) {
-      // Find the parent edges of the current node
-      const parentEdges = edges.filter((edge) => edge.target === currentNodeId);
-
-      // For each parent, find the node and traverse further
-      parentEdges.forEach((edge) => {
-        const parentNode = nodes.find((node) => node.id === edge.source);
-        if (parentNode && !ancestors.some((ancestor) => ancestor.id === parentNode.id)) {
-          ancestors.push(parentNode);
-          traverse(parentNode.id); // Recursive call to find further ancestors
-        }
-      });
-    }
-
-    traverse(nodeId);
-
-    return ancestors;
-  }
-
-  function findParentChildren(nodeId, edges, nodes) {
-    // Step 1: Find the parent node
-    const parentEdge = edges.find((edge) => edge.target === nodeId);
-    if (!parentEdge) return []; // No parent exists
-
-    const parentId = parentEdge.source;
-
-    // Step 2: Find all children of the parent
-    const parentChildrenIds = edges
-      .filter((edge) => edge.source === parentId)
-      .map((edge) => edge.target);
-
-    // Step 3: Retrieve the child nodes
-    const parentChildren = nodes.filter((node) =>
-      parentChildrenIds.includes(node.id)
-    );
-
-    return parentChildren;
-  }
-
-  function hasGrandparentWithMultipleChildren(
-    nodeId: string,
-    edges: { source: string; target: string }[],
-    nodes: { id: string }[]
-  ): boolean {
-    // Find all ancestors of the node
-    const ancestors = findAncestors(nodeId, edges, nodes);
-
-    // Iterate through ancestors to check if any have more than one child
-    for (const ancestor of ancestors) {
-      // Find all edges where the ancestor is the source
-      const childrenEdges = edges.filter((edge) => edge.source === ancestor.id);
-
-      // If the ancestor has more than one child, return true
-      if (childrenEdges.length > 1) {
-        return true;
-      }
-    }
-
-    // No grandparent or higher ancestor has more than one child
-    return false;
-  }
-
-  function updateDescendantsY(
-    newNode: { id: string; type: string; position: { x: number; y: number }; data: { label: string; instruction: string; onAddNode: (nodeType: any) => void; onInputChange: (nodeId: any, newValue: any) => void; onDeleteNode: () => void; } },
-    nodeId: string,
-    edges: { source: string; target: string }[],
-    nodes: { id: string; type: string; position: { x: number; y: number }; data: { label: string; instruction: string; onAddNode: (nodeType: any) => void; onInputChange: (nodeId: any, newValue: any) => void; onDeleteNode: () => void; } }[],
-    offsetY: number = 300) {
-    // Create a copy of the nodes to prevent direct mutation
-    const updatedNodes = [...nodes];
-
-    // Helper function to recursively find and update descendants
-    function updateChildren(currentNodeId: string) {
-      // Find all edges where the source is the current node (direct children)
-      const childEdges = edges.filter((edge) => edge.source === currentNodeId);
-
-      for (const edge of childEdges) {
-        const childId = edge.target;
-
-        // Find the child node in the nodes array and update its y position
-        const childNode = updatedNodes.find((node) => node.id === childId);
-        if (childNode) {
-          childNode.position.y += offsetY;
-        }
-
-        // Recursively update the children of this child node
-        updateChildren(childId);
-      }
-    }
-
-    // Start updating descendants from the given nodeId
-    updateChildren(nodeId);
-
-    // Update the nodes state in React Flow, keeping the existing properties (type, data)
-    setNodes([...updatedNodes.map((node) => ({
-      ...node, // Spread the existing properties of the node
-    })), newNode]);
-  }
-
-  function hasAncestorWithMultipleChildren(nodeId, edges) {
-    // Helper function to find the parent of a node
-    const findParent = (childId) => {
-      const parentEdge = edges.find(edge => edge.target === childId);
-      return parentEdge ? parentEdge.source : null;
-    };
-
-    // Helper function to find children of a node
-    const findChildren = (parentId) => {
-      return edges.filter(edge => edge.source === parentId).map(edge => edge.target);
-    };
-
-    // Start from the current node and move up through its ancestors
-    let currentNode = nodeId;
-
-    while (currentNode) {
-      // Find the parent of the current node
-      const parent = findParent(currentNode);
-
-      // If the parent exists, check if it has multiple children
-      if (parent) {
-        const children = findChildren(parent);
-        if (children.length > 1) {
-          return true; // Found an ancestor with multiple children
-        }
-      }
-
-      // Move to the parent node for the next iteration
-      currentNode = parent;
-    }
-
-    // No ancestor with multiple children was found
-    return false;
-  }
-
-  function getMiddleXOfChildren(nodeId, allEdges, allNodes, positionNodeId) {
-    // Find the IDs of all children of the node
-    const childIds = allEdges
-      .filter((edge) => edge.source === nodeId)
-      .map((edge) => edge.target);
-
-    // Find the x-coordinates of the children nodes
-    const childNodes = allNodes.filter((node) => childIds.includes(node.id));
-    const childXCoordinates = childNodes.map((node) => node.position.x);
-    const maxChildX = Math.max(...childXCoordinates);
-    const minChildX = Math.min(...childXCoordinates);
-
-    // Calculate the middle x-coordinate if there are children
-    if (childXCoordinates.length > 0) {
-      const sum = maxChildX + minChildX;
-      return sum / 2;
-    }
-
-    // Return null if no children exist
-    return positionNodeId;
-  };
-
-  function transformFlowToPrompt(nodes, edges) {
-    const nodeMap = new Map();
-    nodes.forEach(node => nodeMap.set(node.id, node));
-
-    const edgeMap = new Map();
-    edges.forEach(edge => {
-      if (!edgeMap.has(edge.source)) {
-        edgeMap.set(edge.source, []);
-      }
-      edgeMap.get(edge.source).push(edge.target);
-    });
-
-    let stepCounter = 0;  // Counter for step numbers
-
-    function traverseNode(nodeId, depth = 0) {
-      const node = nodeMap.get(nodeId);
-      if (!node) return '';
-
-      const indent = '  '.repeat(depth);
-      let result = '';
-
-      if (node.type === 'ConditionNode') {
-        // Add Condition handling
-        result += `${indent}Condition: ${node.data.instruction}\n`;
-        const children = edgeMap.get(nodeId) || [];
-        children.forEach(childId => {
-          result += traverseNode(childId, depth + 1);
-        });
-      } else {
-        // For other nodes (Instruction Nodes)
-        stepCounter++;  // Increment step number for non-condition nodes
-        result += `${indent}Step ${stepCounter}: - ${node.data.instruction}\n`;
-
-        const children = edgeMap.get(nodeId) || [];
-        children.forEach(childId => {
-          result += traverseNode(childId, depth);
-        });
-      }
-
-      return result;
-    }
-
-    // Assuming the starting node is the first InstructionNode in your flow
-    const startNodeId = nodes.find(node => node.type === 'InstructionNode')?.id || '1';
-
-    // The header explaining the flow
-    const header = `Instructions: To better achieve your goal, follow this flow structure. 
-The flow is tree-like, with steps and conditions organized in a hierarchy. Each step represents a user action or response, and conditions dictate how the flow branches based on specific criteria (such as user input, system status, etc.).
-
-Follow these guidelines:
-
-1. Evaluate conditions: If a step contains a condition (e.g., "age > 18"), evaluate it based on the user's input. If the condition is true, proceed with the corresponding actions. If the condition is false, follow the alternative path.
-2. Branching: Only follow the child steps under a condition if the condition is met. Otherwise, proceed with the steps in the false branch.
-3. Handle user input: Ask for clarification if the user provides incomplete or ambiguous information. If necessary, ask follow-up questions to gather the information needed for the next step.
-4. Contextual adaptation: In real-life problems, conditions and steps may need to adapt based on the context. Always make sure to understand the full scope of the user's situation before proceeding.
-5. Hierarchy and Sequence: Ensure that each step is followed in the exact sequence, respecting the hierarchy of conditions and actions. Conditions may create new branches, but once a branch is selected, the steps under that branch must be followed until completion.
-
-Your task is to follow the instructions, evaluate conditions, and branch only when necessary. Make sure the user's responses are appropriately integrated into the flow and that the conversation adapts dynamically to different scenarios.
-
-Instructions:
-`;
-
-    return header + '\n' + traverseNode(startNodeId).trim();
-  }
-
-  const handleAddNode = useCallback(
-    (originNodeId, nodeType) => {
-      const originNode = nodes.find((node) => node.id === originNodeId);
-      if (!originNode) return;
-
-      const positionY = originNode.type === 'StartPointNode' ? originNode.position.y + 200 : originNode.position.y + 300;
-
-      if (nodeType === "InstructionNode") {
-        const id = uuidv4();
-        const newNode = {
-          id,
-          type: nodeType,
-          position: { x: originNode.position.x, y: positionY },
-          data: {
-            label: `New Node ${id}`,
-            instruction: '', // Default empty instruction
-            onAddNode: (nodeType) => handleAddNode(id, nodeType), // Recursive node addition handler
-            onInputChange: (nodeId, newValue) => handleInputChange(nodeId, newValue), // Input change handler
-            onDeleteNode: () => handleDeleteNode(id),
-          },
-        };
-
-        // Find all condition nodes linked to the origin node
-        const conditionNodes = nodes.filter((node) =>
-          edges.some((edge) => edge.source === originNodeId && edge.target === node.id && node.type === "ConditionNode")
-        );
-
-        if (conditionNodes.length > 0) {
-
-          const remainingEdges = edges.filter(
-            (edge) => edge.source !== originNodeId || !conditionNodes.some((node) => node.id === edge.target)
-          );
-
-          // Add edges from the new InstructionNode to all ConditionNodes
-          const newEdges = conditionNodes.map((conditionNode) => ({
-            id: `e${id}-${conditionNode.id}`,
-            source: id,
-            target: conditionNode.id,
-            type: 'default',
-          }));
-
-          // Find all descendant nodes of the new InstructionNode and the connected ConditionNodes
-          const affectedNodeIds = conditionNodes.flatMap((node) =>
-            findDescendants(node.id, edges)
-          );
-
-          // Update node positions for better layout, only for affected nodes
-          const updatedNodes = nodes.map((node) =>
-            affectedNodeIds.includes(node.id)
-              ? { ...node, position: { ...node.position, y: node.position.y + 300 } }
-              : node
-          );
-
-          // Add new node and updated nodes to the graph
-          setNodes([...updatedNodes, newNode]);
-
-          // Update edges: Link new InstructionNode to all existing ConditionNodes
-          setEdges((currentEdges) => [
-            ...remainingEdges,
-            ...newEdges,
-            { id: `e${originNodeId}-${id}`, source: originNodeId, target: id, type: 'default' },
-          ]);
-        } else {
-          // If no condition nodes exist, add the InstructionNode normally
-          const offset = 300;
-          const originOriginNode = nodes.find((node) => node.id === originNodeId);
-          const existingChildNodes = nodes.filter((node) =>
-            edges.some((edge) => edge.source === originNodeId && edge.target === node.id)
-          );
-
-          const grandparentChildren = findParentChildren(originNodeId, edges, nodes);
-
-          const hasGrandparentWithMultipleChildrenCondition = hasGrandparentWithMultipleChildren(originNodeId, edges, nodes);
-
-          if (!hasGrandparentWithMultipleChildrenCondition) {
-            const updatedNodes = nodes.map((node) =>
-              node.position.y > originNode.position.y
-                ? { ...node, position: { ...node.position, y: node.position.y + offset } }
-                : node
-            );
-
-            setNodes([...updatedNodes, newNode]);
-          } else {
-
-            updateDescendantsY(newNode, originNodeId, edges, nodes, 300);
-          }
-
-          const childEdge = edges.find((edge) => edge.source === originNodeId);
-          const childId = childEdge?.target;
-          const childNode = nodes.find((node) => node.id === childId);
-
-          const newEdges = edges
-            .filter((edge) => edge.source !== originNodeId || edge.target !== childId)
-            .concat(
-              { id: `e${originNodeId}-${id}`, source: originNodeId, target: id, type: 'default' },
-              childId ? { id: `e${id}-${childId}`, source: id, target: childId, type: 'default' } : []
-            );
-
-          setEdges(newEdges);
-        }
-      } else if (nodeType === "ConditionNode") {
-
-        const id = uuidv4();
-        const childEdge = edges.find((edge) => edge.source === originNodeId);
-        const childId = childEdge?.target;
-        const childNode = nodes.find((node) => node.id === childId);
-        const offset = 300;
-
-        if (childNode === null || childNode === undefined || childNode.type === "InstructionNode") {
-
-          const newConditionNode = {
-            id,
-            type: nodeType,
-            position: { x: originNode.position.x, y: positionY },
-            data: {
-              label: `New Node ${id}`,
-              instruction: '', // Default empty instruction
-              onAddNode: (nodeType) => handleAddNode(id, nodeType), // Recursive node addition handler
-              onInputChange: (nodeId, newValue) => handleInputChange(nodeId, newValue), // Input change handler,
-              onDeleteNode: () => handleDeleteNode(id),
-            },
-          };
-
-          const hasGrandparentWithMultipleChildrenCondition = hasGrandparentWithMultipleChildren(originNodeId, edges, nodes);
-
-          if (!hasGrandparentWithMultipleChildrenCondition) {
-            const updatedNodes = nodes.map((node) =>
-              node.position.y > originNode.position.y
-                ? { ...node, position: { ...node.position, y: node.position.y + offset } }
-                : node
-            );
-
-            setNodes([...updatedNodes, newConditionNode]);
-          } else {
-
-            updateDescendantsY(newConditionNode, originNodeId, edges, nodes, 300);
-          }
-
-          // Update the edges
-          const newEdges = edges
-            .filter((edge) => edge.source !== originNodeId || edge.target !== childId)
-            .concat(
-              { id: `e${originNodeId}-${id}`, source: originNodeId, target: id, type: 'default' },
-              childId ? { id: `e${id}-${childId}`, source: id, target: childId, type: 'default' } : []
-            );
-
-          setEdges(newEdges);
-        } else if (childNode.type === "ConditionNode") {
-          // Find all ancestor nodes of the origin node
-          const findAncestors = (nodeId, edges) => {
-            const parents = edges.filter((edge) => edge.target === nodeId).map((edge) => edge.source);
-            return parents.reduce(
-              (acc, parentId) => [...acc, parentId, ...findAncestors(parentId, edges)],
-              []
-            );
-          };
-
-          const ancestorIds = findAncestors(originNodeId, edges);
-          const descendants = findDescendantsNodes(originNodeId, edges, nodes);
-
-          // Find all child nodes of the origin node
-          const existingChildNodes = nodes.filter((node) =>
-            edges.some((edge) => edge.source === originNodeId && edge.target === node.id)
-          );
-
-          // Adjust positions of ancestor nodes
-          const updatedNodes = nodes.map((node) => {
-            if (((ancestorIds.includes(node.id) || originNodeId === node.id) || node.position.x > Math.max(...descendants.map((cnode) => cnode.position.x)) + 50) && !findDescendants(originNode, edges).includes(node.id)) {
-              const children = edges.filter((edge) => edge.source === node.id).map((edge) => edge.target);
-              if (hasAncestorWithMultipleChildren(node.id, edges) && node.id !== originNodeId) {
-                return {
-                  ...node,
-                  position: {
-                    ...node.position,
-                    x: node.position.x + 320, // Shift right
-                  },
-                };
-              } else {
-                return {
-                  ...node,
-                  position: {
-                    ...node.position,
-                    x: node.position.x + 150, // Shift right
-                  },
-                };
-              }
-            }
-            return node;
-          });
-
-          // Update nodes after processing ancestors
-          setNodes([...updatedNodes]);
-
-          // Calculate new node position
-          const horizontalSpacing = 320;
-          let newPositionX =
-            existingChildNodes.length > 0
-              ? Math.max(...existingChildNodes.map((node) => node.position.x)) + horizontalSpacing // Offset from last child
-              : originNode.position.x + horizontalSpacing; // If no children, offset from origin node
-
-          const descendantNodes = findDescendantsNodes(originNodeId, edges, nodes);
-
-          if (descendantNodes.length > 0) {
-            newPositionX = Math.max(...descendantNodes.map((node) => node.position.x)) + horizontalSpacing; // Offset from last descendant
-          }
-
-          const newPositionY = childNode.position.y;  // Align vertically with the origin node
-
-          // Create the new node
-          const newConditionNode = {
-            id,
-            type: nodeType,
-            position: { x: newPositionX, y: newPositionY },
-            data: {
-              label: `New Node ${id}`,
-              instruction: '', // Default empty instruction
-              onAddNode: (nodeType) => handleAddNode(id, nodeType), // Recursive node addition handler
-              onInputChange: (nodeId, newValue) => handleInputChange(nodeId, newValue), // Input change handler
-              onDeleteNode: () => handleDeleteNode(id),
-            },
-          };
-
-          // Add the new node
-          const allNodesWithNewNode = [...updatedNodes, newConditionNode];
-          setNodes(allNodesWithNewNode);
-
-          // Adjust positions of nodes with multiple children
-          const adjustedNodes = [...allNodesWithNewNode];
-
-          const findFirstChildNodeObject = (nodeId, edges, nodes) => {
-            const firstChildEdge = edges.find(edge => edge.source === nodeId);
-            if (firstChildEdge) {
-              return nodes.find(node => node.id === firstChildEdge.target) || null;
-            }
-            return null;
-          };
-
-          for (let i = 0; i < adjustedNodes.length; i++) {
-            const node = adjustedNodes[i];
-            const children = edges.filter((edge) => edge.source === node.id).map((edge) => edge.target);
-
-            if (children.length > 1) {
-              const newx = getMiddleXOfChildren(node.id, edges, adjustedNodes, node.position.x);
-              adjustedNodes[i] = {
-                ...node,
-                position: {
-                  ...node.position,
-                  x: Math.round(newx), // Update x to be in the middle
-                },
-              };
-            }
-
-            if (ancestorIds.includes(node.id) && children.length === 1) {
-              const firstChildNode = findFirstChildNodeObject(node.id, edges, adjustedNodes);
-              if (firstChildNode) {
-                adjustedNodes[i] = {
-                  ...node,
-                  position: {
-                    ...node.position,
-                    x: firstChildNode.position.x, // Align with first child
-                  },
-                };
-              }
-            }
-          }
-
-          // Add the new edge while retaining existing edges
-          const newEdge = { id: `e${originNodeId}-${id}`, source: originNodeId, target: id, type: 'default' };
-          setEdges((currentEdges) => [...currentEdges, newEdge]);
-
-          // Final update to nodes after adding edge
-          setNodes(adjustedNodes);
-
-
-        }
-      }
-      console.log("Nodes", nodes);
-      console.log("Edges", edges);
-
-      const prompt = transformFlowToPrompt(nodes, edges);
-
-      console.log("Prompt", prompt);
-    },
-    [nodes, edges, setNodes, setEdges, flowedges, setflowedges]
-  );
-  const handleInputChange = useCallback(
-    (nodeId, newValue) => {
-      setNodes((prevNodes) =>
-        prevNodes.map((node) =>
-          node.id === nodeId
-            ? { ...node, data: { ...node.data, instruction: newValue } }
-            : node
-        )
-      );
-    },
-    [setNodes]
-  );
-  async function insertFile(file: any, collectionName: string) {
-    let base64Content: string | undefined;
-
-    if (file.content instanceof ArrayBuffer) {
-      base64Content = btoa(
-        String.fromCharCode(...Array.from(new Uint8Array(file.content)))
-      );
-    } else if (
-      typeof file.content === 'string' &&
-      file.content.startsWith('data:application/pdf;base64,')
-    ) {
-      base64Content = file.content.split(',')[1];
-    } else {
-      console.error('Invalid file content format for', file.name);
-      return;
-    }
-
-    if (!base64Content) {
-      console.error('No content found for', file.name);
-      return;
-    }
-    function isValidBase64(base64String: string): boolean {
-      const base64Regex = /^[A-Za-z0-9+/]+={0,2}$/;
-      return base64String.length % 4 === 0 && base64Regex.test(base64String);
-    }
-    if (!isValidBase64(base64Content)) {
-      console.error('Invalid Base64 content detected for', file.name);
-      return;
-    }
-
-    const payload = {
-      id: file.id,
-      name: file.name,
-      size: file.size,
-      type: file.type,
-      category: file.category,
-      content: base64Content,
-      file_path: file.file_path,
-      collection_name: collectionName,
-      batch_size: 50,
-      chunk_size: 512,
-      chunk_overlap: 200,
-    };
-
-    try {
-      const { data } = await axiosInstance.post('/milvus/insert_file', payload);
-      const taskId = data.task_id;
-      console.log(`Task ${taskId} started for file ${file.name}`);
-
-      // Poll for status updates
-      const pollStatus = async () => {
-        try {
-          const { data: status } = await axiosInstance.get(`/milvus/task/${taskId}`);
-          // Update UI progress if available
-          if (status.total_chunks > 0) {
-            const progress = (status.processed_chunks / status.total_chunks) * 100;
-            updateFileProgress(file.id, progress);
-          }
-          if (status.status === 'completed') {
-            console.log(`File ${file.name} processing completed`);
-            updateFileStatus(file.id, 'completed');
-            return;
-          } else if (status.status === 'failed') {
-            console.error(`File ${file.name} processing failed:`, status.error);
-            updateFileStatus(file.id, 'failed', status.error);
-            return;
-          }
-          // Poll again after a delay
-          setTimeout(pollStatus, 1000);
-        } catch (error: any) {
-          console.error(`Error checking status for ${file.name}:`, error);
-          updateFileStatus(file.id, 'failed', error.message);
-        }
-      };
-      pollStatus();
-    } catch (error) {
-      console.error(`Error inserting file ${file.name}:`, error);
-    }
-  }
-  // Helper functions for UI updates
-  function updateFileProgress(fileId: string, progress: number) {
-    const progressElement = document.querySelector(`[data-file-id="${fileId}"] .progress`) as HTMLElement;
-    if (progressElement) {
-      progressElement.style.width = `${progress}%`;
-    }
-  }
-
-  function updateFileStatus(fileId: string, status: 'completed' | 'failed', error?: string) {
-    const statusElement = document.querySelector(`[data-file-id="${fileId}"] .status`);
-    if (statusElement) {
-      statusElement.textContent = status;
-      if (error) {
-        statusElement.setAttribute('title', error);
-      }
-    }
-  }
-
-  async function insertFilesIntoDatabase(fileCategories: FileCategory[], collectionName: string) {
-    const files: FileItem[] = [];
-    fileCategories.forEach((cat) => {
-      files.push(...cat.files);
-    });
-    // Process files with a concurrency limit of 4 (adjust as needed)
-    await processInBatches(files, (file) => insertFile(file, collectionName), 4);
-  }
-
-  // A simple concurrency limiter
-  async function processInBatches<T>(items: T[], handler: (item: T) => Promise<void>, concurrency: number = 4) {
-    const executing: Promise<void>[] = [];
-    const settled = new Map<Promise<void>, boolean>();
-
-    for (const item of items) {
-      const p = handler(item).then(() => {
-        settled.set(p, true);
-      });
-      executing.push(p);
-      if (executing.length >= concurrency) {
-        await Promise.race(executing);
-        // Remove resolved promises
-        executing.splice(0, executing.length, ...executing.filter(p => !settled.get(p)));
-      }
-    }
-    await Promise.all(executing);
-  }
-
-  async function deleteFileFromDatabase(fileId: string, collectionName: string) {
-    try {
-      // Call the backend API to delete the file from Milvus
-      const { data } = await axiosInstance.delete(`/milvus/files/${collectionName}/${fileId}`);
-      console.log(`File ${fileId} deleted from collection ${collectionName}:`, data);
-      return true;
-    } catch (error) {
-      console.error(`Error deleting file ${fileId} from collection ${collectionName}:`, error);
-      return false;
-    }
-  }
-
-  const handleDeleteFile = async (fileId: string) => {
-    if (!fileId) return;
-    
-    try {
-      // If we have a flow ID, try to get the collection name from the wizard metadata
-      let collectionName = "";
-      if (flowData?.id) {
-        try {
-          const metadata = await getFlowWizardMetadata(flowData.id);
-          collectionName = metadata?.collectionName || "";
-        } catch (error) {
-          console.error("Error fetching collection name:", error);
-        }
-      }
-
-      // If we have a collection name, delete the file from the database
-      if (collectionName) {
-        await deleteFileFromDatabase(fileId, collectionName);
-      }
-
-      // Update the UI state to remove the file
-      setFileCategories((prevCategories: FileCategory[]) =>
-        prevCategories.map((category) => ({
-          ...category,
-          files: category.files.filter((file) => file.id !== fileId),
-        }))
-      );
-    } catch (error) {
-      console.error("Error deleting file:", error);
-      setErrorData({
-        title: "Error deleting file",
-        list: [(error as Error).message || "An unknown error occurred"],
-      });
-    }
-  };
-
-  const handleDeleteNode = useCallback(
-    (nodeId) => {
-      // Find edges that involve the node being deleted
-      const incomingEdge = edges.find((edge) => edge.target === nodeId); // Edge pointing to the node
-      const outgoingEdges = edges.filter((edge) => edge.source === nodeId); // Edges pointing from the node
-
-      // Find the node being deleted
-      const nodeToDelete = nodes.find((node) => node.id === nodeId);
-
-      setNodes((prevNodes) => {
-        // Find all descendants of the node
-        const descendantIds = findDescendants(nodeId, edges);
-
-        // Check if the node is of type 'ConditionNode'
-        if (nodeToDelete?.type === "ConditionNode") {
-          // Remove the node and all its descendants
-          return prevNodes.filter((node) => !descendantIds.includes(node.id) && node.id !== nodeId);
-        }
-
-        // Otherwise, just remove the node and adjust descendants' positions
-        return prevNodes
-          .filter((node) => node.id !== nodeId) // Remove the specified node
-          .map((node) => {
-            if (descendantIds.includes(node.id)) {
-              // Shift up the position of descendant nodes
-              return {
-                ...node,
-                position: {
-                  ...node.position,
-                  y: node.position.y - 300, // Shift up
-                },
-              };
-            }
-            return node; // Keep unchanged nodes
-          });
-      });
-
-      if (nodeToDelete?.type === "InstructionNode") {
-
-        setEdges((prevEdges) => {
-          // Find all edges related to the deleted node
-          const incomingEdge = prevEdges.find((edge) => edge.target === nodeId); // Edge coming into the deleted node
-          const outgoingEdges = prevEdges.filter((edge) => edge.source === nodeId); // Edges going out of the deleted node
-
-          // Remove all edges related to the deleted node
-          const filteredEdges = prevEdges.filter(
-            (edge) => edge.source !== nodeId && edge.target !== nodeId
-          );
-
-          // If the node has both an incoming edge and multiple outgoing edges
-          if (incomingEdge && outgoingEdges.length > 0) {
-            // Create new edges connecting the parent to each child
-            const newEdges = outgoingEdges.map((outgoingEdge) => ({
-              id: `e${incomingEdge.source}-${outgoingEdge.target}`,
-              source: incomingEdge.source,
-              target: outgoingEdge.target,
-              type: 'default',
-            }));
-
-            return [...filteredEdges, ...newEdges]; // Add the new edges
-          }
-
-          // If the node has a single incoming edge and no outgoing edges (end of chain)
-          if (incomingEdge && outgoingEdges.length === 0) {
-            return filteredEdges; // No new edges are needed
-          }
-
-          return filteredEdges; // Default case
-        });
-      } else if (nodeToDelete?.type === "ConditionNode") {
-
-        setEdges((prevEdges) => {
-          // Find all edges related to the node
-          const descendantIds = findDescendants(nodeId, prevEdges);
-
-          // If the node is of type 'ConditionNode' and has multiple children, remove all edges related to the descendants
-          if (nodeToDelete?.type === "ConditionNode") {
-            return prevEdges.filter(
-              (edge) => !descendantIds.includes(edge.source) && !descendantIds.includes(edge.target)
-            );
-          }
-
-          // If the node has more than one child, remove all edges for the node and its descendants
-          if (outgoingEdges.length > 1) {
-            return prevEdges.filter(
-              (edge) => !descendantIds.includes(edge.source) && !descendantIds.includes(edge.target)
-            );
-          }
-
-          // Otherwise, remove only edges related to the deleted node
-          const filteredEdges = prevEdges.filter(
-            (edge) => edge.source !== nodeId && edge.target !== nodeId
-          );
-
-          // If the node has an incoming edge and outgoing edges, create new edges
-          if (incomingEdge && outgoingEdges.length > 0) {
-            // Connect the parent to each child
-            const newEdges = outgoingEdges.map((outgoingEdge) => ({
-              id: `e${incomingEdge.source}-${outgoingEdge.target}`,
-              source: incomingEdge.source,
-              target: outgoingEdge.target,
-              type: 'default',
-            }));
-
-            return [...filteredEdges, ...newEdges]; // Add the new edges
-          }
-
-          return filteredEdges; // Default case
-        });
-      }
-
-
-    },
-    [edges, setNodes, setEdges]
-  );
 
   const onConnect = useCallback((params: any) => {
     setEdges((eds) => [...eds, { ...params, type: 'default' }]);
@@ -1105,9 +256,671 @@ Instructions:
     }
   }, [flowData]);
 
-  // Handle update/save
+  // Function to update the flow JSON with wizard metadata
+  const updateFlowWithWizardMetadata = (flow: FlowType): FlowType => {
+    if (!flow || !flow.data || !flow.data.nodes) {
+      console.error("Invalid flow data");
+      return flow;
+    }
+
+    // Generate prompt from flow builder if needed
+    let agentInstuctions = prompt;
+    if (nodes.length > 1) {
+      const generatedPrompt = transformFlowToPrompt(nodes, edges);
+      agentInstuctions = generatedPrompt;
+    } else if (!prompt) {
+      agentInstuctions = "You are a helpful assistant that can answer questions and help with tasks." + "\n\nRULES:\n1. Never query the Vector Store with an empty string.\n2. If you don't know the answer, just say so. Don't make up an answer.\n3. If you are unsure about the answer, just say so. Don't make up an answer.";
+    }
+
+    // Create a deep copy of the flow to avoid mutating the original
+    const updatedFlow = { ...flow, data: { ...flow.data, nodes: [...flow.data.nodes], edges: [...flow.data.edges] } };
+    
+    // Collection name for vector store
+    const collectionName = wizardMetadata?.collectionName || `agent_KB_${Math.random().toString(36).substr(2, 9)}`;
+
+    // Define a type for generic nodes to avoid TypeScript errors
+    type GenericNodeType = {
+      id: string;
+      type: string;
+      position: { x: number; y: number };
+      data: {
+        node: any;
+        showNode: boolean;
+        type: string;
+        id: string;
+      };
+      selected?: boolean;
+      measured?: {
+        width: number;
+        height: number;
+      };
+      dragging?: boolean;
+    };
+
+    // Find the agent node (usually OpenAIToolsAgent or similar)
+    const agentNode = updatedFlow.data.nodes.find(node => 
+      node.data?.type === "ToolCallingAgent" || 
+      node.data?.type === "OpenAIToolsAgent" ||
+      node.data?.id?.includes("OpenAIToolsAgent")
+    );
+    
+    // If we don't have an agent node, we can't add tools or subagents
+    if (!agentNode) {
+      console.warn("No agent node found in the flow, can't add tools or subagents");
+      return updatedFlow;
+    }
+
+    // Get the current tools and subagents from the wizard metadata
+    const currentToolNames = wizardMetadata?.tools?.map(tool => tool.display_name) || [];
+    const currentSubagentNames = wizardMetadata?.subagents?.map(subagent => subagent.name) || [];
+
+    // Get the new tools and subagents from the user inputs
+    const newToolNames = addedTools.map(tool => tool.display_name);
+    const newSubagentNames = addedSubagents.map(subagent => subagent.name);
+
+    // Find tools to add and remove
+    const toolsToAdd = addedTools.filter(tool => !currentToolNames.includes(tool.display_name));
+    const toolsToRemove = currentToolNames.filter(toolName => !newToolNames.includes(toolName));
+
+    // Find subagents to add and remove
+    const subagentsToAdd = addedSubagents.filter(subagent => !currentSubagentNames.includes(subagent.name));
+    const subagentsToRemove = currentSubagentNames.filter(subagentName => !newSubagentNames.includes(subagentName));
+
+    console.log("Tools to add:", toolsToAdd.map(t => t.display_name));
+    console.log("Tools to remove:", toolsToRemove);
+    console.log("Subagents to add:", subagentsToAdd.map(s => s.name));
+    console.log("Subagents to remove:", subagentsToRemove);
+
+    // Identify existing tool nodes in the flow
+    const existingToolNodes = updatedFlow.data.nodes.filter(node => {
+      // Check if this is a tool node
+      if (!node.data?.type) return false;
+
+      // Skip core components that are not tools
+      if (
+        node.data.type === "OpenAIToolsAgent" ||
+        node.data.type === "ToolCallingAgent" ||
+        node.data.type === "OpenAIModel" ||
+        node.data.type === "Prompt" ||
+        node.data.type === "OpenAIEmbeddings" ||
+        node.data.type === "Milvus" ||
+        node.data.type === "ChatMessage" ||
+        node.data.type === "ChatMessagePromptTemplate" ||
+        node.data.type === "ChatInput" ||
+        node.data.type === "ChatOutput" ||
+        node.data.type === "Memory" ||
+        node.data.type === "RunFlow"
+      ) {
+        return false;
+      }
+
+      return true;
+    });
+    
+    // Identify existing subagent nodes in the flow
+    const existingSubagentNodes = updatedFlow.data.nodes.filter(node => 
+      node.data?.type === "RunFlow" || 
+      (node.data?.id && node.data.id.includes("RunFlow"))
+    );
+
+    // Find tool nodes to remove based on the tool names to remove
+    const toolNodesToRemove = existingToolNodes.filter(node => {
+      // Extract the tool name from the node
+      const toolName = node.data?.node?.display_name;
+      return toolName && toolsToRemove.includes(toolName);
+    });
+
+    // Find subagent nodes to remove based on the subagent names to remove
+    const subagentNodesToRemove = existingSubagentNodes.filter(node => {
+      // Extract the subagent name from the node
+      const subagentName = node.data?.node?.template?.flow_name_selected?.value;
+      return subagentName && subagentsToRemove.includes(subagentName);
+    });
+
+    // Get the IDs of nodes to remove
+    const nodeIdsToRemove = [
+      ...toolNodesToRemove.map(node => node.id),
+      ...subagentNodesToRemove.map(node => node.id)
+    ];
+
+    // Find edges connected to the nodes to remove
+    const edgesToRemove = updatedFlow.data.edges.filter(edge => {
+      // Check if the edge connects to a node that is being removed
+      return nodeIdsToRemove.includes(edge.source) || nodeIdsToRemove.includes(edge.target);
+    });
+
+    // Get the IDs of edges to remove
+    const edgeIdsToRemove = edgesToRemove.map(edge => edge.id);
+
+    // Create new tool nodes for tools to add
+    const toolNodes: GenericNodeType[] = toolsToAdd.map((tool, index) => {
+      const toolId = `${tool.display_name.replace(/\s+/g, '')}-${Math.random().toString(36).substr(2, 7)}`;
+
+      // Handle special cases for certain tools
+      if (tool.display_name === "Gmail Fetcher Tool" || 
+          tool.display_name === "Gmail Sender Tool" || 
+          tool.display_name === "Gmail Responder Tool" || 
+          tool.display_name === "Gmail Draft Tool") {
+        tool.template.api_key = {
+          ...tool.template.api_key,
+          value: "m1m8sy261xzb4l4hjmwq",
+          load_from_db: false
+        };
+      }
+
+      // Handle integration tools that need user_id
+      if (tool.display_name === "Gmail Email Loader" || 
+          tool.display_name === "Gmail Email Sender" || 
+          tool.display_name === "Gmail Email Responder" ||
+          tool.display_name === "Gmail Email Draft Creator" ||
+          tool.display_name === "Google Calendar Event Creator" ||
+          tool.display_name === "Google Calendar Event Loader" ||
+          tool.display_name === "Google Calendar Event Modifier" ||
+          tool.display_name === "Google Sheets Data Loader" ||
+          tool.display_name === "Google Sheets Data Modifier" ||
+          tool.display_name === "Slack Message Sender" ||
+          tool.display_name === "Slack Retrieve Messages" ||
+          tool.display_name === "Slack List Channels & Users" ||
+          tool.display_name === "Slack DM Sender" ||
+          tool.display_name === "HubSpot Contact Creator" ||
+          tool.display_name === "HubSpot Deal Creator" ||
+          tool.display_name === "HubSpot Company Creator" ||
+          tool.display_name === "HubSpot Company Loader" ||
+          tool.display_name === "HubSpot Contact Loader") {
+        // Get the access token from cookies
+        const token = document.cookie
+          .split('; ')
+          .find(row => row.startsWith('access_token_lf='))
+          ?.split('=')[1];
+
+        if (token) {
+          // Decode the JWT to get the user ID
+          const base64Url = token.split('.')[1];
+          const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+          const jsonPayload = decodeURIComponent(atob(base64).split('').map(function (c) {
+            return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+          }).join(''));
+
+          const { sub: user_id } = JSON.parse(jsonPayload);
+          
+          // Set the user_id in the tool template
+          if (tool.template && tool.template.user_id) {
+            tool.template.user_id = {
+              ...tool.template.user_id,
+              value: user_id
+            };
+          }
+        }
+      }
+
+      return {
+        id: toolId,
+        type: "genericNode",
+        position: { x: 200 * (index + 1), y: 100 },
+        data: {
+          node: tool,
+          showNode: !tool.minimized,
+          type: tool.display_name,
+          id: toolId,
+        },
+      };
+    });
+
+    // Get all flow names for subagent selection
+    const userFlowNames = flows?.map((f) => f.name) || [];
+
+    // Create nodes for subagents to add
+    const subagentNodes: GenericNodeType[] = subagentsToAdd.map((subagent, index) => {
+      const subagentNodeId = `RunFlow-${Math.random().toString(36).substring(2, 7)}`;
+      const posX = 1043.0266059303253;
+      const posY = -270.7925864199767 + (index * 100);
+      
+      return {
+        "id": subagentNodeId,
+        "type": "genericNode",
+        "position": {
+          "x": posX,
+          "y": posY
+        },
+        "data": {
+          "node": {
+            "template": {
+              "_type": "Component",
+              "code": {
+                "type": "code",
+                "required": true,
+                "placeholder": "",
+                "list": false,
+                "show": true,
+                "multiline": true,
+                "value": "from typing import Any\n\nfrom loguru import logger\n\nfrom langflow.base.tools.run_flow import RunFlowBaseComponent\nfrom langflow.helpers.flow import run_flow\nfrom langflow.schema import dotdict\n\n\nclass RunFlowComponent(RunFlowBaseComponent):\n    display_name = \"Run Flow\"\n    description = (\n        \"Creates a tool component from a Flow that takes all its inputs and runs it. \"\n        \" \\n **Select a Flow to use the tool mode**\"\n    )\n    beta = True\n    name = \"RunFlow\"\n    icon = \"Workflow\"\n\n    inputs = RunFlowBaseComponent._base_inputs\n    outputs = RunFlowBaseComponent._base_outputs\n\n    async def update_build_config(self, build_config: dotdict, field_value: Any, field_name: str | None = None):\n        if field_name == \"flow_name_selected\":\n            build_config[\"flow_name_selected\"][\"options\"] = await self.get_flow_names()\n            missing_keys = [key for key in self.default_keys if key not in build_config]\n            if missing_keys:\n                msg = f\"Missing required keys in build_config: {missing_keys}\"\n                raise ValueError(msg)\n            if field_value is not None:\n                try:\n                    graph = await self.get_graph(field_value)\n                    build_config = self.update_build_config_from_graph(build_config, graph)\n                except Exception as e:\n                    msg = f\"Error building graph for flow {field_value}\"\n                    logger.exception(msg)\n                    raise RuntimeError(msg) from e\n        return build_config\n\n    async def run_flow_with_tweaks(self):\n        tweaks: dict = {}\n\n        flow_name_selected = self._attributes.get(\"flow_name_selected\")\n        parsed_flow_tweak_data = self._attributes.get(\"flow_tweak_data\", {})\n        if not isinstance(parsed_flow_tweak_data, dict):\n            parsed_flow_tweak_data = parsed_flow_tweak_data.dict()\n\n        if parsed_flow_tweak_data != {}:\n            for field in parsed_flow_tweak_data:\n                if \"~\" in field:\n                    [node, name] = field.split(\"~\")\n                    if node not in tweaks:\n                        tweaks[node] = {}\n                    tweaks[node][name] = parsed_flow_tweak_data[field]\n        else:\n            for field in self._attributes:\n                if field not in self.default_keys and \"~\" in field:\n                    [node, name] = field.split(\"~\")\n                    if node not in tweaks:\n                        tweaks[node] = {}\n                    tweaks[node][name] = self._attributes[field]\n\n        return await run_flow(\n            inputs=None,\n            output_type=\"all\",\n            flow_id=None,\n            flow_name=flow_name_selected,\n            tweaks=tweaks,\n            user_id=str(self.user_id),\n            session_id=self.graph.session_id or self.session_id,\n        )\n",
+                "fileTypes": [],
+                "file_path": "",
+                "password": false,
+                "name": "code",
+                "advanced": true,
+                "dynamic": true,
+                "info": "",
+                "load_from_db": false,
+                "title_case": false
+              },
+              "flow_name_selected": {
+                "tool_mode": false,
+                "trace_as_metadata": true,
+                "options": userFlowNames,
+                "options_metadata": [],
+                "combobox": false,
+                "dialog_inputs": {},
+                "required": false,
+                "placeholder": "",
+                "show": true,
+                "name": "flow_name_selected",
+                "display_name": "Flow Name",
+                "advanced": false,
+                "dynamic": false,
+                "info": "The name of the flow to run.",
+                "real_time_refresh": true,
+                "refresh_button": true,
+                "title_case": false,
+                "type": "str",
+                "_input_type": "DropdownInput",
+                "value": subagent.name
+              },
+              "tools_metadata": {
+                "tool_mode": false,
+                "is_list": true,
+                "list_add_label": "Add More",
+                "table_schema": {
+                  "columns": [
+                    {
+                      "name": "name",
+                      "display_name": "Tool Name",
+                      "sortable": false,
+                      "filterable": false,
+                      "type": "text",
+                      "description": "Specify the name of the tool.",
+                      "disable_edit": false,
+                      "edit_mode": "inline",
+                      "hidden": false,
+                      "formatter": "text"
+                    },
+                    {
+                      "name": "description",
+                      "display_name": "Tool Description",
+                      "sortable": false,
+                      "filterable": false,
+                      "type": "text",
+                      "description": "Describe the purpose of the tool.",
+                      "disable_edit": false,
+                      "edit_mode": "popover",
+                      "hidden": false,
+                      "formatter": "text"
+                    },
+                    {
+                      "name": "tags",
+                      "display_name": "Tool Identifiers",
+                      "sortable": false,
+                      "filterable": false,
+                      "type": "text",
+                      "description": "The default identifiers for the tools and cannot be changed.",
+                      "disable_edit": true,
+                      "edit_mode": "inline",
+                      "hidden": true,
+                      "formatter": "text"
+                    }
+                  ]
+                },
+                "trigger_text": "",
+                "trigger_icon": "Hammer",
+                "table_icon": "Hammer",
+                "table_options": {
+                  "block_add": true,
+                  "block_delete": true,
+                  "block_edit": true,
+                  "block_sort": true,
+                  "block_filter": true,
+                  "block_hide": true,
+                  "block_select": true,
+                  "hide_options": true,
+                  "field_parsers": {
+                    "name": [
+                      "snake_case",
+                      "no_blank"
+                    ],
+                    "commands": "commands"
+                  },
+                  "description": "Modify tool names and descriptions to help agents understand when to use each tool."
+                },
+                "trace_as_metadata": true,
+                "required": false,
+                "placeholder": "",
+                "show": true,
+                "name": "tools_metadata",
+                "value": [
+                  {
+                    "name": `${subagent.name}_tool_RunFlow-data_output`,
+                    "description": `Tool designed to execute the flow '${subagent.name}'. Flow details: ${subagent.description || ""}. Output details: data_output() - Creates a tool component from a Flow that takes all its inputs and runs it.  \n **Select a Flow to use the tool mode**`,
+                    "tags": [
+                      `${subagent.name}_tool_RunFlow-data_output`
+                    ]
+                  },
+                  {
+                    "name": `${subagent.name}_tool_RunFlow-dataframe_output`,
+                    "description": `Tool designed to execute the flow '${subagent.name}'. Flow details: ${subagent.description || ""}. Output details: dataframe_output() - Creates a tool component from a Flow that takes all its inputs and runs it.  \n **Select a Flow to use the tool mode**`,
+                    "tags": [
+                      `${subagent.name}_tool_RunFlow-dataframe_output`
+                    ]
+                  },
+                  {
+                    "name": `${subagent.name}_tool_RunFlow-message_output`,
+                    "description": `Tool designed to execute the flow '${subagent.name}'. Flow details: ${subagent.description || ""}. Output details: message_output() - Creates a tool component from a Flow that takes all its inputs and runs it.  \n **Select a Flow to use the tool mode**`,
+                    "tags": [
+                      `${subagent.name}_tool_RunFlow-message_output`
+                    ]
+                  }
+                ],
+                "display_name": "Edit tools",
+                "advanced": false,
+                "dynamic": false,
+                "info": "",
+                "real_time_refresh": true,
+                "title_case": false,
+                "type": "table",
+                "_input_type": "TableInput"
+              }
+            },
+            "description": "Creates a tool component from a Flow that takes all its inputs and runs it.  \n **Select a Flow to use the tool mode**",
+            "icon": "Workflow",
+            "base_classes": [
+              "Data",
+              "DataFrame",
+              "Message"
+            ],
+            "display_name": "Run Flow",
+            "documentation": "",
+            "minimized": false,
+            "custom_fields": {},
+            "output_types": [],
+            "pinned": false,
+            "conditional_paths": [],
+            "frozen": false,
+            "outputs": [
+              {
+                "types": [
+                  "Tool"
+                ],
+                "selected": "Tool",
+                "name": "component_as_tool",
+                "hidden": null,
+                "display_name": "Toolset",
+                "method": "to_toolkit",
+                "value": "__UNDEFINED__",
+                "cache": true,
+                "required_inputs": null,
+                "allows_loop": false,
+                "tool_mode": true
+              }
+            ],
+            "field_order": [
+              "flow_name_selected",
+              "session_id"
+            ],
+            "beta": true,
+            "legacy": false,
+            "edited": false,
+            "metadata": {},
+            "tool_mode": true,
+            "category": "logic",
+            "key": "RunFlow",
+            "lf_version": "1.1.5"
+          },
+          "showNode": true,
+          "type": "RunFlow",
+          "id": subagentNodeId
+        },
+        "selected": false,
+        "measured": {
+          "width": 320,
+          "height": 436
+        },
+        "dragging": false
+      };
+    });
+
+    // Create edges for the subagent nodes
+    const subagentEdges = subagentNodes.map(subagentNode => {
+      const agentNodeId = agentNode?.id || '';
+      
+      // Create source and target handles
+      const sourceHandle = `{œdataTypeœ:œRunFlowœ,œidœ:œ${subagentNode.id}œ,œnameœ:œcomponent_as_toolœ,œoutput_typesœ:[œToolœ]}`;
+      const targetHandle = `{œfieldNameœ:œtoolsœ,œidœ:œ${agentNodeId}œ,œinputTypesœ:[œToolœ],œtypeœ:œotherœ}`;
+      
+      // Return the edge object
+      return {
+        "source": subagentNode.id,
+        "sourceHandle": sourceHandle,
+        "target": agentNodeId,
+        "targetHandle": targetHandle,
+        "data": {
+          "targetHandle": {
+            "fieldName": "tools",
+            "id": agentNodeId,
+            "inputTypes": ["Tool"],
+            "type": "other"
+          },
+          "sourceHandle": {
+            "dataType": "RunFlow",
+            "id": subagentNode.id,
+            "name": "component_as_tool",
+            "output_types": ["Tool"]
+          }
+        },
+        "id": `xy-edge__${subagentNode.id}${sourceHandle}-${agentNodeId}${targetHandle}`,
+        "animated": false,
+        "className": ""
+      };
+    });
+
+    // Create edges for the tool nodes
+    const toolEdges = toolNodes.map((toolNode) => {
+      const sourceHandle = `{œdataTypeœ:œ${toolNode.data.type}œ,œidœ:œ${toolNode.id}œ,œnameœ:œapi_build_toolœ,œoutput_typesœ:[œToolœ]}`;
+      const targetHandle = `{œfieldNameœ:œtoolsœ,œidœ:œ${agentNode?.id || ''}œ,œinputTypesœ:[œToolœ],œtypeœ:œotherœ}`;
+
+      return {
+        id: `xy-edge__${toolNode.id}${sourceHandle}-${agentNode?.id || ''}${targetHandle}`,
+        source: toolNode.id,
+        target: agentNode?.id || '',
+        sourceHandle: sourceHandle,
+        targetHandle: targetHandle,
+        data: {
+          targetHandle: {
+            fieldName: "tools",
+            id: agentNode?.id || '',
+            inputTypes: ["Tool"],
+            type: "other",
+          },
+          sourceHandle: {
+            dataType: toolNode.data.type,
+            id: toolNode.id,
+            name: "api_build_tool",
+            output_types: ["Tool"],
+          },
+        },
+        className: "",
+        selected: false,
+      };
+    });
+
+    // Update the nodes in the flow
+    updatedFlow.data.nodes = updatedFlow.data.nodes.map((node): any => {
+      // Update the prompt node with the new instructions
+      if (node.data?.id?.includes("Prompt")) {
+        return {
+          ...node,
+          data: {
+            ...node.data,
+            node: {
+              ...node.data.node,
+              template: {
+                ...node.data.node.template,
+                template: {
+                  ...node.data.node.template.template,
+                  value: agentInstuctions,
+                },
+              },
+            },
+          },
+        };
+      }
+
+      // Update the OpenAI model node with advanced settings
+      if (node.data?.type === "OpenAIModel") {
+        return {
+          ...node,
+          data: {
+            ...node.data,
+            node: {
+              ...node.data.node,
+              template: {
+                ...node.data.node.template,
+                model_name: {
+                  ...node.data.node.template.model_name,
+                  value: advancedSettings.modelName,
+                },
+                temperature: {
+                  ...node.data.node.template.temperature,
+                  value: advancedSettings.temperature,
+                },
+                json_mode: {
+                  ...node.data.node.template.json_mode,
+                  value: advancedSettings.jsonMode,
+                },
+                max_tokens: {
+                  ...node.data.node.template.max_tokens,
+                  value: advancedSettings.maxTokens,
+                },
+                timeout: {
+                  ...node.data.node.template.timeout,
+                  value: advancedSettings.timeout,
+                },
+                seed: {
+                  ...node.data.node.template.seed,
+                  value: advancedSettings.seed,
+                }
+              }
+            }
+          }
+        };
+      }
+
+      // Update the Milvus node with the collection name
+      if (node.data?.id?.includes("Milvus")) {
+        return {
+          ...node,
+          data: {
+            ...node.data,
+            node: {
+              ...node.data.node,
+              template: {
+                ...node.data.node.template,
+                collection_name: {
+                  ...node.data.node.template.collection_name,
+                  value: collectionName,
+                }
+              },
+            },
+          },
+        };
+      }
+
+      // Update the OpenAI embeddings model
+      if (node.data?.id?.includes("OpenAIEmbeddings")) {
+        return {
+          ...node,
+          data: {
+            ...node.data,
+            node: {
+              ...node.data.node,
+              template: {
+                ...node.data.node.template,
+                model: {
+                  ...node.data.node.template.model,
+                  value: "text-embedding-3-small",
+                },
+              }
+            }
+          }
+        };
+      }
+
+      // Update the OpenAI tools agent with advanced settings
+      if (node.data?.id?.includes("OpenAIToolsAgent")) {
+        return {
+          ...node,
+          data: {
+            ...node.data,
+            node: {
+              ...node.data.node,
+              template: {
+                ...node.data.node.template,
+                max_iterations: {
+                  ...node.data.node.template.max_iterations,
+                  value: advancedSettings.maxRetries,
+                },
+                handle_parsing_errors: {
+                  ...node.data.node.template.handle_parsing_errors,
+                  value: advancedSettings.handleParseErrors,
+                }
+              }
+            }
+          }
+        };
+      }
+
+      return node;
+    });
+
+    // Remove nodes that need to be removed
+    updatedFlow.data.nodes = updatedFlow.data.nodes.filter(node => {
+      // Keep the node if it's not in the list of nodes to remove
+      return !nodeIdsToRemove.includes(node.id);
+    });
+
+    // Remove edges connected to the removed nodes
+    updatedFlow.data.edges = updatedFlow.data.edges.filter(edge => {
+      // Keep the edge if it's not in the list of edges to remove
+      return !edgeIdsToRemove.includes(edge.id);
+    });
+
+    // Add the new tool and subagent nodes
+    const allNodes = [
+      ...updatedFlow.data.nodes,
+      ...toolNodes,
+      ...subagentNodes
+    ];
+    
+    // Type assertion to satisfy TypeScript
+    updatedFlow.data.nodes = allNodes as AllNodeType[];
+
+    // Add the new edges
+    updatedFlow.data.edges = [
+      ...updatedFlow.data.edges,
+      ...toolEdges,
+      ...subagentEdges
+    ];
+
+    return updatedFlow;
+  };
+
   const handleUpdate = async () => {
+    setIsSaving(true);
     try {
+      // Generate prompt from flow builder if needed
+      if (nodes.length > 1) {
+        const generatedPrompt = transformFlowToPrompt(nodes, edges);
+        setPrompt(generatedPrompt);
+      }
+
       // First update the flow settings
       if (flowData && flowData.id) {
         // Process and save any files in the knowledge base
@@ -1170,13 +983,16 @@ Instructions:
           }
         }
 
+        // Update the flow with wizard metadata
+        const updatedFlow = updateFlowWithWizardMetadata(flowData);
+
         // Use provided onUpdate function or fallback to saveFlow
         if (onUpdate) {
-          await onUpdate(name, description, flowData.id, endpoint_name);
+          await onUpdate(name, description, updatedFlow.id, endpoint_name);
         } else {
           // Use the saveFlow hook as a fallback
           await saveFlow({
-            ...flowData,
+            ...updatedFlow,
             name,
             description,
             endpoint_name
@@ -1204,7 +1020,7 @@ Instructions:
         
         // Create updated flow data
         const updatedFlowData = {
-          ...flowData,
+          ...updatedFlow,
           name,
           description,
           endpoint_name
@@ -1223,22 +1039,21 @@ Instructions:
       }
     } catch (error) {
       console.error("Error updating flow:", error);
-      // Show error message
       setErrorData({
         title: "Error updating flow",
         list: [(error as Error).message || "An unknown error occurred"],
       });
+    } finally {
+      setIsSaving(false);
     }
   };
 
   // Define categories and their items for the wizard sidebar
-  // Define categories and their items
   const tabCategories: Category[] = [
     {
       title: "Agent Builder",
       items: [
         { title: "Basic informations", icon: "Bot", id: "guided-ai-agent" },
-        //{ title: "All templates", icon: "LayoutPanelTop", id: "all-templates" },
       ],
     },
     {
@@ -1251,7 +1066,6 @@ Instructions:
     {
       title: "Connected resources",
       items: [
-        // { title: "Integrations", icon: "sparkles", id: "integrations" },
         { title: "knowledge", icon: "Database", id: "khowledge_base" },
         { title: "Tools", icon: "hammer", id: "tools-link" },
         { title: "Subagents", icon: "git-fork", id: "subagents" },
@@ -1263,8 +1077,6 @@ Instructions:
       title: "More settings",
       items: [
         { title: "Advanced options", icon: "settings", id: "advanced-settings" },
-        // { title: "Configure template", icon: "layout-panel-top", id: "configure-template" },
-        // { title: "Task views", icon: "list-todo", id: "agentss" },
       ],
     }
   ];
@@ -1337,9 +1149,9 @@ Instructions:
                       ...node,
                       data: {
                         ...node.data,
-                        onAddNode: (nodeType) => handleAddNode(node.id, nodeType), // Add dynamic onAddNode handler
-                        onInputChange: (newValue) => handleInputChange(node.id, newValue),
-                        onDeleteNode: () => handleDeleteNode(node.id),
+                        onAddNode: (nodeType) => handleAddNode(node.id, nodeType, nodes, edges, setNodes, setEdges), // Add dynamic onAddNode handler
+                        onInputChange: (newValue) => handleInputChange(node.id, newValue, setNodes),
+                        onDeleteNode: () => handleDeleteNode(node.id, nodes, edges, setNodes, setEdges),
                       },
                     }))}
                     edges={edges}
@@ -1374,9 +1186,9 @@ Instructions:
                       ...node,
                       data: {
                         ...node.data,
-                        onAddNode: (nodeType) => handleAddNode(node.id, nodeType), // Add dynamic onAddNode handler
-                        onInputChange: (newValue) => handleInputChange(node.id, newValue),
-                        onDeleteNode: () => handleDeleteNode(node.id),
+                        onAddNode: (nodeType) => handleAddNode(node.id, nodeType, nodes, edges, setNodes, setEdges), // Add dynamic onAddNode handler
+                        onInputChange: (newValue) => handleInputChange(node.id, newValue, setNodes),
+                        onDeleteNode: () => handleDeleteNode(node.id, nodes, edges, setNodes, setEdges),
                       },
                     }))}
                     edges={edges}
