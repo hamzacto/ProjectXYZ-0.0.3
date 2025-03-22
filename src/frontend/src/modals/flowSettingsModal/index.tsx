@@ -146,7 +146,7 @@ export default function FlowSettingsModal({
     {
       id: '1',
       type: 'StartPointNode',
-      position: { x: 250, y: 0 },
+      position: { x: 400, y: 0 },
       data: {
         label: 'Start Node',
         instruction: '', // Placeholder for user input

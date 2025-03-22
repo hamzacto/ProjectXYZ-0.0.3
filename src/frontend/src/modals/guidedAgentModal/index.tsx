@@ -244,7 +244,11 @@ function GuidedAgentModal({
           {triggerChild}
           <DialogContent
             onOpenAutoFocus={(event) => event.preventDefault()}
-            onEscapeKeyDown={onEscapeKeyDown}
+            onEscapeKeyDown={(event) => event.preventDefault()}
+            onPointerDownOutside={(event) => {
+              // Prevent the modal from closing when clicking outside
+              event.preventDefault();
+            }}
             className={contentClasses}
           >
             {onSubmit ? (

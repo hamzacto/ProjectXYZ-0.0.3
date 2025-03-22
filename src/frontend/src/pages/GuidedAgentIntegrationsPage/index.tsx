@@ -41,9 +41,7 @@ export default function GuidedAgentIntegrationsPage(): JSX.Element {
           <div className="p-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-4">
-                <div className="h-8 w-8 flex items-center justify-center">
-                  <SlackIcon />
-                </div>
+                <ForwardedIconComponent name="Slack" className="h-8 w-8" />
                 <div>
                   <h3 className="text-lg font-medium">Slack Integration</h3>
                   <p className="text-sm text-muted-foreground">
@@ -65,9 +63,7 @@ export default function GuidedAgentIntegrationsPage(): JSX.Element {
           <div className="p-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-4">
-                <div className="h-8 w-8 flex items-center justify-center">
-                  <HubSpotIcon/>
-                </div>
+                <ForwardedIconComponent name="HubSpot" className="h-8 w-8" />
                 <div>
                   <h3 className="text-lg font-medium">HubSpot Integration</h3>
                   <p className="text-sm text-muted-foreground">
