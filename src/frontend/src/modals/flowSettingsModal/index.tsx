@@ -12,6 +12,7 @@ import { AllNodeType, FlowType } from "../../types/flow";
 import { isEndpointNameValid } from "../../utils/utils";
 import BaseModal from "../baseModal";
 import { useFlowWizardMetadata } from "@/hooks/flows/use-flow-wizard-metadata";
+import { useIntegrationStore } from "@/stores/integrationStore";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { GuidedAgentNavComponent } from "../templatesModal/components/GuidedAgentNavComponent";
 import GuidedAiAgentCoreInstructions from "../templatesModal/components/GuidedAiAgentCoreInstructions";
@@ -267,7 +268,7 @@ export default function FlowSettingsModal({
     let agentInstuctions = prompt;
     if (nodes.length > 1) {
       const generatedPrompt = transformFlowToPrompt(nodes, edges);
-      agentInstuctions = generatedPrompt;
+      agentInstuctions = agentInstuctions + "\n\n" + generatedPrompt + "\n\nRULES:\n1. Never query the Vector Store with an empty string.\n2. If you don't know the answer, just say so. Don't make up an answer.\n3. If you are unsure about the answer, just say so. Don't make up an answer.";
     } else if (!prompt) {
       agentInstuctions = "You are a helpful assistant that can answer questions and help with tasks." + "\n\nRULES:\n1. Never query the Vector Store with an empty string.\n2. If you don't know the answer, just say so. Don't make up an answer.\n3. If you are unsure about the answer, just say so. Don't make up an answer.";
     }
@@ -997,6 +998,95 @@ export default function FlowSettingsModal({
             description,
             endpoint_name
           });
+        }
+
+        // Handle triggers - compare current triggers with selected triggers
+        try {
+          // Get the current triggers from the wizard metadata
+          const currentTriggers = wizardMetadata?.triggers || [];
+          
+          // Find triggers to add and remove
+          const triggersToAdd = selectedTriggers.filter(trigger => !currentTriggers.includes(trigger));
+          const triggersToRemove = currentTriggers.filter(trigger => !selectedTriggers.includes(trigger));
+          
+          console.log("Triggers to add:", triggersToAdd);
+          console.log("Triggers to remove:", triggersToRemove);
+
+          // Create axios instance for trigger API calls
+          const axiosTriggers = axios.create({
+            baseURL: '/api/v1',
+            headers: useIntegrationStore.getState().getAuthHeaders(),
+            withCredentials: true
+          });
+
+          // Handle triggers to remove - unwatch webhooks and delete trigger entries
+          for (const triggerInfo of triggersToRemove) {
+            try {
+              // Parse the trigger info (format: "service_name:integration_id")
+              const [serviceName, integrationId] = triggerInfo.split(':');
+              
+              // Call the appropriate unwatch endpoint based on the service name
+              if (serviceName === 'gmail') {
+                // For Gmail, we need to call stop on the users endpoint
+                await axiosTriggers.post(`/gmail/watch/${integrationId}`, {
+                  integration_id: integrationId,
+                  flow_id: flowData.id
+                });
+                // Delete integration trigger - DELETE to /integrations/trigger
+                await axiosTriggers.delete(`/integrations/trigger/${integrationId}/${flowData.id}`);
+              } else if (serviceName === 'slack') {
+                // For Slack, use POST method to unwatch
+                await axiosTriggers.post(`/slack/unwatch/${integrationId}`, {
+                  integration_id: integrationId,
+                  flow_id: flowData.id
+                });
+                // Delete integration trigger
+                await axiosTriggers.delete(`/integrations/trigger/${integrationId}/${flowData.id}`);
+              } else if (serviceName === 'hubspot') {
+                // For HubSpot, use POST to unwatch
+                await axiosTriggers.post(`/hubspot/unwatch/${integrationId}`, {
+                  integration_id: integrationId,
+                  flow_id: flowData.id
+                });
+                // Delete integration trigger
+                await axiosTriggers.delete(`/integrations/trigger/${integrationId}/${flowData.id}`);
+              }
+            } catch (error) {
+              console.error('Failed to remove trigger:', triggerInfo, error);
+              // Continue with other triggers even if one fails
+            }
+          }
+
+          // Handle triggers to add - set up webhooks and create trigger entries
+          for (const triggerInfo of triggersToAdd) {
+            try {
+              // Parse the trigger info (format: "service_name:integration_id")
+              const [serviceName, integrationId] = triggerInfo.split(':');
+              
+              // Call the appropriate watch endpoint based on the service name
+              if (serviceName === 'gmail') {
+                axiosTriggers.post(`/gmail/watch/${integrationId}?integration_id=${integrationId}&flow_id=${flowData.id}`);
+                // Create integration trigger
+                axiosTriggers.post(`/integrations/trigger?integration_id=${integrationId}&flow_id=${flowData.id}`);
+              } else if (serviceName === 'slack') {
+                // For Slack, use POST to watch
+                axiosTriggers.post(`/slack/watch/${integrationId}`);
+                // Create integration trigger
+                axiosTriggers.post(`/integrations/trigger?integration_id=${integrationId}&flow_id=${flowData.id}`);
+              } else if (serviceName === 'hubspot') {
+                // Create integration trigger for HubSpot
+                axiosTriggers.post(`/create-integration-trigger/hubspot?integration_id=${integrationId}&flow_id=${flowData.id}`);
+                // Set up HubSpot webhook for deal events
+                axiosTriggers.post(`/hubspot/watch/${integrationId}`);
+              }
+            } catch (error) {
+              console.error('Failed to setup trigger:', triggerInfo, error);
+              // Continue with other triggers even if one fails
+            }
+          }
+        } catch (error) {
+          console.error("Error managing triggers:", error);
+          // Continue with the flow update even if trigger management fails
         }
 
         // Then update the wizard metadata

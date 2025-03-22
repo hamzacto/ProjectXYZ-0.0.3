@@ -9,6 +9,7 @@ from google_auth_oauthlib.flow import Flow as GoogleFlow
 from googleapiclient.discovery import build
 from fastapi.security import OAuth2PasswordBearer
 
+from langflow.services.database.models.integration_trigger.model import IntegrationTrigger
 import requests
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
@@ -45,7 +46,7 @@ from langflow.services.telemetry.schema import RunPayload
 from dotenv import load_dotenv
 
 from langflow.services.database.models.user.crud import create_integration_token, get_integration_tokens, delete_integration_token, get_integration_token_by_id, update_integration_token, create_integration_trigger, update_slack_token
-from langflow.services.database.models.integration_trigger.crud import get_integration_triggers_by_integration
+from langflow.services.database.models.integration_trigger.crud import delete_integration_trigger_by_integration_and_flow, get_integration_triggers_by_integration
 from langflow.services.database.models.integration_token.crud import get_integration_by_email_address
 from langflow.services.database.models.email_thread.crud import (
     create_email_thread,
@@ -865,3 +866,18 @@ async def verify_pubsub_token(request: Request):
         # For testing, don't raise the exception
         return True
         # raise HTTPException(status_code=403, detail=f"Token verification failed: {str(e)}")
+
+@router.delete("/integrations/trigger/{integration_id}/{flow_id}")
+async def delete_integration_trigger(integration_id: str,
+ flow_id: str,
+ current_user: User = Depends(get_current_active_user),
+ db: AsyncSession = Depends(get_session)
+):
+    try:
+        if not current_user:
+            raise HTTPException(status_code=401, detail="Unauthorized")
+        # Delete the trigger from the database
+        await delete_integration_trigger_by_integration_and_flow(db, UUID(integration_id), UUID(flow_id))
+        return {"message": "Integration trigger deleted successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
