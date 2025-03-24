@@ -41,6 +41,7 @@ import GuidedAgentIntegrationsPage from "./pages/GuidedAgentIntegrationsPage";
 import GmailIntegrationsDetailPage from "./pages/GmailIntegrationsDetailPage/index";
 import SlackIntegrationsDetailPage from "./pages/SlackIntegrationsDetailPage/index";
 import HubSpotIntegrationsDetailPage from "./pages/HubSpotIntegrationsDetailPage/index";
+import ChatPage from "./pages/Chat_Page";
 
 const AdminPage = lazy(() => import("./pages/AdminPage"));
 const LoginAdminPage = lazy(() => import("./pages/AdminPage/LoginPage"));
@@ -218,6 +219,7 @@ const router = createBrowserRouter(
                     </ProtectedAdminRoute>
                   }
                 />
+                <Route path="chat/:id" element={<ChatPage />} />
               </Route>
               <Route path="flow/:id/">
                 <Route path="" element={<DashboardWrapperPage />}>
