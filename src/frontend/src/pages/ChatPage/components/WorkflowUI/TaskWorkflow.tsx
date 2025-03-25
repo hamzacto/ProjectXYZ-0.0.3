@@ -81,7 +81,6 @@ export function TaskWorkflow({ messages, query }: TaskWorkflowProps) {
             className={`chat-container space-y-0 max-w-3xl mx-auto overflow-y-auto no-scrollbar flex flex-col ${extraSpacing}`}
             style={{
                 minHeight: '100%',
-                paddingBottom: '100px',
             }}
         >
             {sortedMessages.map((message, index) => {

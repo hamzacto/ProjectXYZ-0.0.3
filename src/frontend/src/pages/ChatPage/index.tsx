@@ -85,6 +85,15 @@ export default function ChatModal({
   // File handling and drag/drop
   const [files, setFiles] = useState<FilePreviewType[]>([]);
   const [isDragging, setIsDragging] = useState(false);
+  
+  // Track when a message is sent to trigger scrolling
+  const [scrollTrigger, setScrollTrigger] = useState(0);
+  
+  // Track which session last sent a message (for padding)
+  const [lastMessageSession, setLastMessageSession] = useState<string | null>(null);
+
+  // Refs for scrolling
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
 
   // All nodes in the flow
   const nodes = useFlowStore((state) => state.nodes);
@@ -338,13 +347,24 @@ export default function ChatModal({
     }
   }, [id]);
 
-  const fetchMessages = async (flowId: string) => {
+  // Memoize the conversion of timestamps once for efficiency
+  const standardizeTimestamp = useCallback((timestamp: string) => {
+    if (!timestamp) return '';
+
+    // Simplify the timestamp standardization by using a regex replacement
+    // This is more efficient than the string manipulations in the original
+    return timestamp.replace(/[^0-9T:-]/g, '');
+  }, []);
+
+  // Make sure fetchMessages is defined BEFORE it is used in the useEffect
+  const fetchMessages = useCallback(async (flowId: string) => {
     try {
       setError(null);
       const response = await chatService.getMessages(flowId);
-
-      // Convert the response messages to the correct format
-      const convertedMessages = response.map(msg => {
+      
+      // Convert and set messages in one operation to avoid redundant processing
+      const mappedMessages = response.map(msg => {
+        // Create properties object efficiently
         const messageProperties: MessageProperties = {
           text_color: msg.properties?.text_color || "#000000",
           background_color: msg.properties?.background_color || "#ffffff",
@@ -361,6 +381,7 @@ export default function ChatModal({
           targets: msg.properties?.targets || [],
         };
 
+        // Process files only once
         const convertedFiles: FileAttachment[] = msg.files && Array.isArray(msg.files)
           ? msg.files.map((file: string | FileAttachment) => ({
             path: typeof file === 'string' ? file : file.path,
@@ -369,10 +390,28 @@ export default function ChatModal({
           }))
           : [];
 
+        // Make sure content_blocks match the expected type
+        const contentBlocks = msg.content_blocks ? msg.content_blocks.map(block => ({
+          title: block.title || "",
+          contents: block.contents.map(content => ({
+            type: content.type || "text",
+            duration: content.duration || 0,
+            header: content.header || { title: "", icon: "" },
+            text: 'text' in content ? content.text : '',
+            name: 'name' in content ? content.name : undefined,
+            tool_input: 'tool_input' in content ? content.tool_input : undefined,
+            output: 'output' in content ? content.output : undefined,
+            error: 'error' in content ? content.error : null
+          })),
+          allow_markdown: block.allow_markdown || true,
+          media_url: typeof block.media_url === 'string' ? block.media_url : null
+        })) : [];
+
+        // Return the fully formatted message
         return {
           id: msg.id,
           flow_id: msg.flow_id,
-          timestamp: msg.timestamp,
+          timestamp: standardizeTimestamp(msg.timestamp),
           sender: msg.sender,
           sender_name: msg.sender_name,
           session_id: msg.session_id,
@@ -381,21 +420,250 @@ export default function ChatModal({
           edit: msg.edit,
           properties: messageProperties,
           category: msg.category || "",
-          content_blocks: msg.content_blocks || [],
-        };
-      }) as Message[];
-
-      // Sort messages by timestamp
-      const sortedMessages = convertedMessages.sort((a, b) =>
+          content_blocks: contentBlocks,
+        } as Message;
+      }).sort((a, b) => 
         new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
       );
 
-      setMessages(sortedMessages);
+      setMessages(mappedMessages);
     } catch (error) {
       console.error("Error fetching messages:", error);
       setError("Failed to fetch messages. Please check your Flow ID and try again.");
     }
-  };
+  }, [standardizeTimestamp]);
+
+  // Add this near other state declarations at the top
+  const { isFetched: messagesFetched, refetch } = useGetMessagesQuery(
+    {
+      mode: "union",
+      id: flowId,
+    },
+    { enabled: !!flowId },
+  );
+
+  // Now your useEffect can use messagesFetched without error
+  useEffect(() => {
+    if (flowId && messagesFetched) {
+      const relevantMessages = storeMessages.filter(msg => msg.flow_id === flowId);
+      
+      // Only update if store messages are different
+      const storeMessageIds = new Set(relevantMessages.map(msg => msg.id));
+      const currentMessageIds = new Set(messages.filter(msg => !msg.id.startsWith('temp-')).map(msg => msg.id));
+      
+      // Check if the sets are different
+      const needsUpdate = storeMessageIds.size !== currentMessageIds.size || 
+        Array.from(storeMessageIds).some(id => !currentMessageIds.has(id));
+      
+      if (needsUpdate) {
+        // Convert store message type to ChatPage message type  
+        const convertedMessages = relevantMessages.map(msg => {
+          const messageProperties: MessageProperties = {
+            text_color: msg.properties?.text_color || "#000000",
+            background_color: msg.properties?.background_color || "#ffffff",
+            edited: msg.edit || false,
+            source: {
+              id: msg.properties?.source?.id || null,
+              display_name: msg.properties?.source?.display_name || null,
+              source: msg.properties?.source?.source || null,
+            },
+            icon: msg.properties?.icon || "",
+            allow_markdown: msg.properties?.allow_markdown || true,
+            positive_feedback: null,
+            state: msg.properties?.state || "",
+            targets: msg.properties?.targets || [],
+          };
+
+          const convertedFiles: FileAttachment[] = msg.files && Array.isArray(msg.files)
+            ? msg.files.map((file: string | FileAttachment) => ({
+              path: typeof file === 'string' ? file : file.path,
+              type: typeof file === 'string' ? file.split('.').pop() || 'unknown' : file.type,
+              name: typeof file === 'string' ? file.split('/').pop() || file : file.name
+            }))
+            : [];
+
+          // Make sure content_blocks match the expected type
+          const contentBlocks = msg.content_blocks ? msg.content_blocks.map(block => ({
+            title: block.title || "",
+            contents: block.contents.map(content => ({
+              type: content.type || "text",
+              duration: content.duration || 0,
+              header: content.header || { title: "", icon: "" },
+              text: 'text' in content ? content.text : '',
+              name: 'name' in content ? content.name : undefined,
+              tool_input: 'tool_input' in content ? content.tool_input : undefined,
+              output: 'output' in content ? content.output : undefined,
+              error: 'error' in content ? content.error : null
+            })),
+            allow_markdown: block.allow_markdown || true,
+            media_url: typeof block.media_url === 'string' ? block.media_url : null
+          })) : [];
+
+          return {
+            id: msg.id,
+            flow_id: msg.flow_id,
+            timestamp: standardizeTimestamp(msg.timestamp),
+            sender: msg.sender,
+            sender_name: msg.sender_name,
+            session_id: msg.session_id,
+            text: msg.text,
+            files: convertedFiles,
+            edit: msg.edit,
+            properties: messageProperties,
+            category: msg.category || "",
+            content_blocks: contentBlocks,
+          } as Message;
+        });
+
+        // Find any temporary messages that aren't in the store yet
+        const tempMessages = messages.filter(msg =>
+          msg.id.startsWith('temp-') &&
+          !convertedMessages.some(storeMsg => storeMsg.text === msg.text && storeMsg.sender === msg.sender)
+        );
+
+        // Keep the original order of store messages and append temporary messages
+        setMessages([...convertedMessages, ...tempMessages]);
+      }
+    }
+  }, [storeMessages, flowId, messagesFetched, standardizeTimestamp, messages]);
+
+  // Memoize the filtered messages to prevent recalculation on every render
+  const filteredMessages = useMemo(() => {
+    // When creating a new chat with no visible session, show no messages
+    if (!visibleSession) {
+      return [];
+    }
+
+    // For existing sessions, show only messages for that session and properly convert for UI
+    return messages
+      .filter(message => message.session_id === visibleSession)
+      .map(message => ({
+        ...message,
+        background_color: message.properties.background_color,
+        text_color: message.properties.text_color,
+        files: Array.isArray(message.files)
+          ? message.files.map(file => typeof file === 'string' ? file : file.path)
+          : [],
+        content_blocks: message.content_blocks?.map(block => ({
+          ...block,
+          component: 'default',
+          media_url: block.media_url ? [block.media_url] : undefined,
+          contents: block.contents.map(content => {
+            if (content.type === 'tool_use') {
+              return {
+                type: 'tool_use' as const,
+                duration: content.duration,
+                header: content.header,
+                name: content.name || "",
+                tool_input: content.tool_input,
+                output: content.output,
+                error: content.error
+              };
+            } else {
+              return {
+                type: 'text' as const,
+                duration: content.duration,
+                header: content.header,
+                text: content.text
+              };
+            }
+          })
+        })),
+        properties: {
+          ...message.properties,
+          background_color: undefined,
+          text_color: undefined
+        }
+      }))
+      // Sort messages by timestamp using the standardized format
+      .sort((a, b) => {
+        const timestampA = standardizeTimestamp(a.timestamp);
+        const timestampB = standardizeTimestamp(b.timestamp);
+        return new Date(timestampA).getTime() - new Date(timestampB).getTime();
+      });
+  }, [messages, visibleSession, standardizeTimestamp]);
+
+  // Update sessions when messages change
+  useEffect(() => {
+    const sessions = new Set<string>();
+    messages
+      .filter((message) => message.flow_id === flowId)
+      .forEach((row) => {
+        sessions.add(row.session_id);
+      });
+
+    setSessions((prev) => {
+      const newSessions = Array.from(sessions);
+      if (prev.length < newSessions.length) {
+        // set the new session as visible
+        setvisibleSession(
+          newSessions[newSessions.length - 1],
+        );
+      }
+      return newSessions;
+    });
+  }, [messages, flowId]);
+
+  // Handle session visibility changes
+  useEffect(() => {
+    if (!visibleSession) {
+      // Generate a new session ID
+      const newSessionId = `Session ${new Date().toLocaleString("en-US", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: false, second: "2-digit", timeZone: "UTC" })}`;
+
+      // Set it as the current session
+      setSessionId(newSessionId);
+
+      // Clear all temporary messages
+      setMessages(prevMessages => prevMessages.filter(msg => !msg.id.startsWith('temp-')));
+
+      // Don't add to sessions list yet - it will be added when it has messages
+
+      // Don't make the new session visible until it has messages
+    } else if (visibleSession) {
+      setSessionId(visibleSession);
+      if (selectedViewField?.type === "Session") {
+        setSelectedViewField({
+          id: visibleSession,
+          type: "Session",
+        });
+      }
+      
+      // Clear padding when switching sessions if not the last message session
+      if (messagesEndRef.current && visibleSession !== lastMessageSession) {
+        messagesEndRef.current.style.paddingBottom = "0px";
+      }
+    }
+  }, [visibleSession, lastMessageSession]);
+
+  // Fetch messages when flowId changes or component mounts
+  useEffect(() => {
+    if (flowId) {
+      fetchMessages(flowId);
+    }
+  }, [flowId]);
+
+  // Setup auto-refresh
+  useEffect(() => {
+    // Clear any existing interval
+    if (refreshIntervalRef.current) {
+      window.clearInterval(refreshIntervalRef.current);
+      refreshIntervalRef.current = null;
+    }
+
+    // Set up new interval if autoRefresh is enabled, streaming is disabled, and we have a flowId
+    if (autoRefresh && flowId && !shouldStreamEvents()) {
+      refreshIntervalRef.current = window.setInterval(() => {
+        fetchMessages(flowId);
+      }, 5000); // Refresh every 5 seconds
+    }
+
+    // Cleanup function
+    return () => {
+      if (refreshIntervalRef.current) {
+        window.clearInterval(refreshIntervalRef.current);
+      }
+    };
+  }, [autoRefresh, flowId, shouldStreamEvents]);
 
   const config = useGetConfig();
   function shouldStreamEvents() {
@@ -410,14 +678,6 @@ export default function ChatModal({
       }
     };
   }, []);
-
-  const { isFetched: messagesFetched, refetch } = useGetMessagesQuery(
-    {
-      mode: "union",
-      id: flowId,
-    },
-    { enabled: !!flowId },
-  );
 
   // Update sessions when messages change
   useEffect(() => {
@@ -496,21 +756,6 @@ export default function ChatModal({
     };
   }, [autoRefresh, flowId, shouldStreamEvents]);
 
-  // Add utility function at the top of the component
-  const standardizeTimestamp = useCallback((timestamp: string) => {
-    if (!timestamp) return '';
-
-    // Remove all special characters and spaces
-    const cleanTimestamp = timestamp.replace(/[T\s]/g, '');
-
-    // Extract date and time parts
-    const datePart = cleanTimestamp.slice(0, 10); // YYYY-MM-DD
-    const timePart = cleanTimestamp.slice(10);     // HH:mm:ss
-
-    // Reconstruct in ISO format
-    return `${datePart}T${timePart}`;
-  }, []);
-
   // Update local messages when store messages change
   useEffect(() => {
     if (flowId && messagesFetched) {
@@ -554,8 +799,8 @@ export default function ChatModal({
           edit: msg.edit,
           properties: messageProperties,
           category: msg.category || "",
-          content_blocks: msg.content_blocks || [],
-        };
+          content_blocks: convertContentBlocks(msg.content_blocks || []),
+        } as Message;
       }) as unknown as Message[];
 
       // Log converted messages for debugging
@@ -585,70 +830,10 @@ export default function ChatModal({
     }
   }, [storeMessages, flowId, messagesFetched, standardizeTimestamp]);
 
-  // Filter messages by current session and sort by timestamp
-  const filteredMessages = useMemo(() => {
-    // When creating a new chat with no visible session, show no messages
-    if (!visibleSession) {
-      return [];
-    }
-
-    // For existing sessions, show only messages for that session
-    const messagesToFilter = messages.filter(message => message.session_id === visibleSession);
-
-    // Convert messages to the expected type by moving background_color and text_color to root level
-    const convertedMessages = messagesToFilter.map(message => ({
-      ...message,
-      background_color: message.properties.background_color,
-      text_color: message.properties.text_color,
-      files: Array.isArray(message.files)
-        ? message.files.map(file => typeof file === 'string' ? file : file.path)
-        : [],
-      content_blocks: message.content_blocks?.map(block => ({
-        ...block,
-        component: 'default',
-        media_url: block.media_url ? [block.media_url] : undefined,
-        contents: block.contents.map(content => {
-          if (content.type === 'tool_use') {
-            return {
-              type: 'tool_use' as const,
-              duration: content.duration,
-              header: content.header,
-              name: content.name,
-              tool_input: content.tool_input,
-              output: content.output,
-              error: content.error
-            };
-          } else {
-            return {
-              type: 'text' as const,
-              duration: content.duration,
-              header: content.header,
-              text: content.text
-            };
-          }
-        })
-      })),
-      properties: {
-        ...message.properties,
-        background_color: undefined,
-        text_color: undefined
-      }
-    }));
-
-    // Sort messages by timestamp
-    const sortedMessages = [...convertedMessages].sort((a, b) => {
-      const timestampA = standardizeTimestamp(a.timestamp);
-      const timestampB = standardizeTimestamp(b.timestamp);
-
-      return new Date(timestampA).getTime() - new Date(timestampB).getTime();
-    });
-
-    return sortedMessages;
-  }, [messages, visibleSession, standardizeTimestamp]);
-
-  // Scroll to bottom when messages change
+  // Remove the conflicting useEffect for scrolling
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    // This line conflicts with the other scrolling mechanisms, removing it
+    // messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [filteredMessages]);
 
   // Handle file delete
@@ -682,7 +867,61 @@ export default function ChatModal({
     };
   }, []);
 
-  // Update the sendMessage function
+  // Remove the ResizeObserver effect that's causing scrolling on load
+  useEffect(() => {
+    if (!messagesEndRef.current) return;
+    
+    // Create a ResizeObserver to handle changes to the container size
+    const resizeObserver = new ResizeObserver(() => {
+      // Don't auto-scroll here, as this fires on component mount
+      // messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    });
+    
+    // Observe the messages container
+    resizeObserver.observe(messagesEndRef.current);
+    
+    // Cleanup function
+    return () => {
+      resizeObserver.disconnect();
+    };
+  }, []); // Empty dependency array to only run once
+
+  // Force scroll to bottom after sending a message
+  const scrollToBottom = useCallback((force = false): void => {
+    // Immediate scroll - no timeout delay
+    if (messagesEndRef.current) {
+      // Add padding only for the session where message was sent
+      if (sessionId === lastMessageSession) {
+        messagesEndRef.current.style.paddingBottom = "110px";
+      }
+      
+      // Scroll immediately when forced, otherwise smooth
+      messagesEndRef.current.scrollIntoView({ 
+        behavior: "auto", // Always use auto for immediate effect
+        block: "start" 
+      });
+      
+      // Use direct scrolling for immediate effect
+      if (messagesContainerRef.current) {
+        messagesContainerRef.current.scrollTo({
+          top: messagesEndRef.current.offsetTop,
+          behavior: "auto" // Always use auto for immediate effect
+        });
+      }
+    }
+  }, [sessionId, lastMessageSession]);
+
+  // Effect to handle scrolling when messages change
+  useEffect(() => {
+    if (scrollTrigger > 0) {
+      // Use RAF to ensure DOM is updated before scrolling
+      requestAnimationFrame(() => {
+        scrollToBottom(true);
+      });
+    }
+  }, [scrollTrigger, scrollToBottom]);
+
+  // Optimize the sendMessage function
   const sendMessage = useCallback(
     async ({
       repeat = 1,
@@ -693,17 +932,22 @@ export default function ChatModal({
     }): Promise<void> => {
       if (isBuilding) return;
 
-      // Generate a temporary message ID
+      // Set this session as the last message session
+      setLastMessageSession(sessionId);
+      
+      // Trigger scroll BEFORE adding the message
+      setScrollTrigger(prev => prev + 1);
+
+      // Generate a temporary message ID once
       const tempId = `temp-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-
-      // Save the chat value before clearing it
       const messageText = chatValue;
+      const timestamp = standardizeTimestamp(new Date().toISOString());
 
-      // Create a user message and add it to the UI immediately
+      // Create user message once with all required properties
       const userMessage: Message = {
         id: tempId,
         flow_id: flowId,
-        timestamp: standardizeTimestamp(new Date().toISOString()),
+        timestamp,
         sender: "User",
         sender_name: "You",
         session_id: sessionId,
@@ -725,21 +969,13 @@ export default function ChatModal({
         content_blocks: [],
       };
 
-      // Log the new message timestamp
-      console.log("New message timestamp:", userMessage.timestamp);
+      // Clear the input before updating messages
+      setChatValue("");
 
-      // Add the user message to the messages list without sorting
-      setMessages(prevMessages => {
-        const newMessages = [...prevMessages, userMessage];
-        console.log("All messages after adding new one:", newMessages.map(m => ({
-          id: m.id,
-          timestamp: m.timestamp,
-          sender: m.sender
-        })));
-        return newMessages;
-      });
+      // Add the message to messages array AFTER triggering scroll
+      setMessages(prevMessages => [...prevMessages, userMessage]);
 
-      // Now make sure this session is in the sessions list and visible
+      // Update session state only when needed
       setSessions(prev => {
         if (!prev.includes(sessionId)) {
           return [...prev, sessionId];
@@ -750,28 +986,39 @@ export default function ChatModal({
       // Make sure this session is visible
       setvisibleSession(sessionId);
 
-      // Clear the input
-      setChatValue("");
-
-      // Send the message to the API
+      // Reset files array
+      const filesToUse = files || [];
+      
+      // Send the message to the API once per repeat
       for (let i = 0; i < repeat; i++) {
-        await buildFlow({
-          input_value: messageText,
-          startNodeId: chatInput?.id,
-          files: files,
-          silent: true,
-          session: sessionId,
-          stream: shouldStreamEvents(),
-        }).catch((err) => {
+        try {
+          await buildFlow({
+            input_value: messageText,
+            startNodeId: chatInput?.id,
+            files: filesToUse,
+            silent: true,
+            session: sessionId,
+            stream: shouldStreamEvents(),
+          });
+        } catch (err) {
           console.error(err);
-        });
+        }
       }
 
       // Clear files after sending
       setFiles([]);
     },
-    [isBuilding, chatValue, chatInput?.id, sessionId, buildFlow, shouldStreamEvents, flowId, standardizeTimestamp],
+    [isBuilding, chatValue, chatInput?.id, sessionId, buildFlow, shouldStreamEvents, flowId, standardizeTimestamp, setFiles, setChatValue],
   );
+
+  function convertContentBlocks(blocks: any[]): ContentBlock[] {
+    return blocks?.map(block => ({
+      title: block.title || '',
+      contents: block.contents || [],
+      allow_markdown: block.allow_markdown ?? true,
+      media_url: Array.isArray(block.media_url) ? block.media_url[0] || null : block.media_url
+    })) || [];
+  }
 
   return (
     <BaseModal
@@ -897,7 +1144,16 @@ export default function ChatModal({
                   onDragLeave={dragLeave}
                   onDrop={drop}
                 >
-                  <div ref={messagesEndRef} className="chat-message-div m-auto w-full max-w-[768px] md:w-5/6">
+                  <div 
+                    ref={messagesContainerRef} 
+                    className="chat-message-div m-auto w-full max-w-[768px] md:w-5/6 overflow-y-auto"
+                    style={{ 
+                      height: "calc(100vh - 250px)", /* Make the container taller to allow scrolling */
+                      display: "flex",
+                      flexDirection: "column",
+                      scrollBehavior: "smooth" // Add smooth scrolling to container
+                    }}
+                  >
                     {error && (
                       <Alert variant="destructive" className="mb-4">
                         <IconComponent name="AlertCircle" className="h-4 w-4" />
@@ -925,9 +1181,17 @@ export default function ChatModal({
                           messages={filteredMessages}
                           query={filteredMessages.find(m => m.sender === "User")?.text}
                         />
+                        <div 
+                          id="chat-end" 
+                          ref={messagesEndRef} 
+                          style={{ 
+                            height: "20px",
+                            width: "100%",
+                            transition: "padding-bottom 0.5s ease-out" // Slower, smoother transition
+                          }} 
+                        />
                       </div>
                     )}
-                    <div ref={messagesEndRef} />
                   </div>
 
                   <div className="m-auto w-full max-w-[768px] md:w-5/6">
