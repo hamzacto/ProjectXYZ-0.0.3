@@ -35,6 +35,8 @@ import useFileSizeValidator from "@/shared/hooks/use-file-size-validator";
 import BaseModal from "@/modals/baseModal";
 import { SidebarOpenView } from "@/modals/IOModal/components/sidebar-open-view";
 import { Separator } from "@/components/ui/separator";
+import { TaskWorkflow } from "./components/WorkflowUI";
+import "./components/WorkflowUI/customStyles.css";
 
 export default function ChatModal({
   children,
@@ -42,7 +44,7 @@ export default function ChatModal({
   setOpen,
   disable,
   isPlayground,
-  canvasOpen }: IOModalPropsType) : JSX.Element  {
+  canvasOpen }: IOModalPropsType): JSX.Element {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [flowId, setFlowId] = useState(id || "");
@@ -291,18 +293,6 @@ export default function ChatModal({
     };
   }, [flowId, isBuilding]);
 
-  // Create a session ID with timestamp if needed
-  // useEffect(() => {
-  //   if (!sessionId && sessions.length === 0) {
-  //     const newSessionId = `Session ${new Date().toLocaleString("en-US", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: false, second: "2-digit", timeZone: "UTC" })}`;
-  //     setSessionId(newSessionId);
-  //     setCurrentSession(newSessionId);
-  //   } else if (sessions.length > 0 && !sessionId) {
-  //     // If we have sessions but no sessionId, use the first session
-  //     setSessionId(sessions[0].id);
-  //     setCurrentSession(sessions[0].id);
-  //   }
-  // }, [sessionId, sessions]);
 
   // Load flow data when component mounts and flowId is available
   useEffect(() => {
@@ -347,47 +337,6 @@ export default function ChatModal({
       setFlowId(id);
     }
   }, [id]);
-
-  // Handle session deletion
-  // const handleDeleteSession = (sessionIdToDelete: string) => {
-  //   const sessionMessages = messages.filter(msg => msg.session_id === sessionIdToDelete);
-  //   if (sessionMessages.length > 0) {
-  //     deleteSessionFunction(
-  //       {
-  //         ids: sessionMessages.map(msg => msg.id),
-  //       },
-  //       {
-  //         onSuccess: () => {
-  //           setSuccessData({
-  //             title: "Session deleted successfully.",
-  //           });
-  //           deleteSessionStore(sessionIdToDelete);
-
-  //           // Select another session if the current one is deleted
-  //           if (currentSession === sessionIdToDelete) {
-  //             const remainingSessions = sessions.filter(s => s.id !== sessionIdToDelete);
-  //             if (remainingSessions.length > 0) {
-  //               setCurrentSession(remainingSessions[0].id);
-  //             } else {
-  //               setCurrentSession("");
-  //               // Create a new session
-  //               const newSessionId = `Session ${new Date().toLocaleString("en-US", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: false, second: "2-digit", timeZone: "UTC" })}`;
-  //               setSessionId(newSessionId);
-  //             }
-  //           }
-
-  //           // Update sessions list
-  //           setSessions(prevSessions => prevSessions.filter(s => s.id !== sessionIdToDelete));
-  //         },
-  //         onError: () => {
-  //           setErrorData({
-  //             title: "Error deleting Session.",
-  //           });
-  //         },
-  //       }
-  //     );
-  //   }
-  // };
 
   const fetchMessages = async (flowId: string) => {
     try {
@@ -478,7 +427,7 @@ export default function ChatModal({
       .forEach((row) => {
         sessions.add(row.session_id);
       });
-    
+
     setSessions((prev) => {
       const newSessions = Array.from(sessions);
       if (prev.length < newSessions.length) {
@@ -496,15 +445,15 @@ export default function ChatModal({
     if (!visibleSession) {
       // Generate a new session ID
       const newSessionId = `Session ${new Date().toLocaleString("en-US", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: false, second: "2-digit", timeZone: "UTC" })}`;
-      
+
       // Set it as the current session
       setSessionId(newSessionId);
-      
+
       // Clear all temporary messages
       setMessages(prevMessages => prevMessages.filter(msg => !msg.id.startsWith('temp-')));
-      
+
       // Don't add to sessions list yet - it will be added when it has messages
-      
+
       // Don't make the new session visible until it has messages
     } else if (visibleSession) {
       setSessionId(visibleSession);
@@ -642,12 +591,52 @@ export default function ChatModal({
     if (!visibleSession) {
       return [];
     }
-    
+
     // For existing sessions, show only messages for that session
     const messagesToFilter = messages.filter(message => message.session_id === visibleSession);
 
+    // Convert messages to the expected type by moving background_color and text_color to root level
+    const convertedMessages = messagesToFilter.map(message => ({
+      ...message,
+      background_color: message.properties.background_color,
+      text_color: message.properties.text_color,
+      files: Array.isArray(message.files)
+        ? message.files.map(file => typeof file === 'string' ? file : file.path)
+        : [],
+      content_blocks: message.content_blocks?.map(block => ({
+        ...block,
+        component: 'default',
+        media_url: block.media_url ? [block.media_url] : undefined,
+        contents: block.contents.map(content => {
+          if (content.type === 'tool_use') {
+            return {
+              type: 'tool_use' as const,
+              duration: content.duration,
+              header: content.header,
+              name: content.name,
+              tool_input: content.tool_input,
+              output: content.output,
+              error: content.error
+            };
+          } else {
+            return {
+              type: 'text' as const,
+              duration: content.duration,
+              header: content.header,
+              text: content.text
+            };
+          }
+        })
+      })),
+      properties: {
+        ...message.properties,
+        background_color: undefined,
+        text_color: undefined
+      }
+    }));
+
     // Sort messages by timestamp
-    const sortedMessages = [...messagesToFilter].sort((a, b) => {
+    const sortedMessages = [...convertedMessages].sort((a, b) => {
       const timestampA = standardizeTimestamp(a.timestamp);
       const timestampB = standardizeTimestamp(b.timestamp);
 
@@ -757,7 +746,7 @@ export default function ChatModal({
         }
         return prev;
       });
-      
+
       // Make sure this session is visible
       setvisibleSession(sessionId);
 
@@ -872,7 +861,7 @@ export default function ChatModal({
                       </div>
                     </div>
                   </div>
-                  
+
                   <div className={cn(sidebarOpen ? "hidden" : "flex")}>
                     <ShadTooltip side="bottom" styleClasses="z-50" content="New Chat">
                       <Button
@@ -893,8 +882,8 @@ export default function ChatModal({
                   </div>
                 </div>
               </div>
-              
-              <div 
+
+              <div
                 className={cn(
                   visibleSession ? "h-[95%]" : "h-full",
                   sidebarOpen
@@ -902,8 +891,13 @@ export default function ChatModal({
                     : ""
                 )}
               >
-                <div className="flex h-full flex-col">
-                  <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                <div className="flex h-full w-full flex-col rounded-md"
+                  onDragOver={dragOver}
+                  onDragEnter={dragEnter}
+                  onDragLeave={dragLeave}
+                  onDrop={drop}
+                >
+                  <div ref={messagesEndRef} className="chat-message-div m-auto w-full max-w-[768px] md:w-5/6">
                     {error && (
                       <Alert variant="destructive" className="mb-4">
                         <IconComponent name="AlertCircle" className="h-4 w-4" />
@@ -913,24 +907,30 @@ export default function ChatModal({
                     )}
 
                     {filteredMessages.length === 0 ? (
-                      <div className="flex h-full items-center justify-center">
-                        <p className="text-muted-foreground">
-                          No messages yet. Start a conversation!
-                        </p>
+                      <div className="flex h-full w-full flex-col items-center justify-center">
+                        <div className="flex flex-col items-center justify-center gap-4 p-8">
+                          <div className="flex flex-col items-center justify-center">
+                            <h3 className="mt-2 pb-2 text-2xl font-semibold text-primary">
+                              New chat
+                            </h3>
+                            <p className="text-lg text-muted-foreground">
+                              Test your flow with a chat prompt
+                            </p>
+                          </div>
+                        </div>
                       </div>
                     ) : (
-                      filteredMessages.map((message) => (
-                        <MessageBubble
-                          key={message.id}
-                          message={message}
-                          isUser={message.sender === "User"}
+                      <div className="w-full">
+                        <TaskWorkflow 
+                          messages={filteredMessages}
+                          query={filteredMessages.find(m => m.sender === "User")?.text}
                         />
-                      ))
+                      </div>
                     )}
                     <div ref={messagesEndRef} />
                   </div>
 
-                  <div className="p-4 border-t">
+                  <div className="m-auto w-full max-w-[768px] md:w-5/6">
                     <ChatInput
                       noInput={!hasChatInputNode}
                       sendMessage={sendMessage}
