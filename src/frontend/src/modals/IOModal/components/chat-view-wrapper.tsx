@@ -58,7 +58,7 @@ export const ChatViewWrapper = ({
           className={cn(
             sidebarOpen ? "pointer-events-none opacity-0" : "",
             "absolute flex h-8 items-center justify-center rounded-sm ring-offset-background transition-opacity focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
-            isPlayground ? "right-2 top-4" : "right-12 top-2",
+            isPlayground ? "right-2 top-16 mt-4 mr-3" : "right-12 top-2",
           )}
         >
           <ShadTooltip side="bottom" styleClasses="z-50" content="New Chat">

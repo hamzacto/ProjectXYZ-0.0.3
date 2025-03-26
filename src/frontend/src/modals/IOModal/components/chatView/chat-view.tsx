@@ -164,13 +164,13 @@ export default function ChatView({
 
   return (
     <div
-      className="flex h-full w-full flex-col rounded-md"
+      className="flex h-full w-full flex-col rounded-md pb-2"
       onDragOver={dragOver}
       onDragEnter={dragEnter}
       onDragLeave={dragLeave}
       onDrop={onDrop}
     >
-      <div ref={messagesRef} className="chat-message-div">
+      <div ref={messagesRef} className="chat-message-div pb-10">
         {chatHistory &&
           (isBuilding || chatHistory?.length > 0 ? (
             <>
