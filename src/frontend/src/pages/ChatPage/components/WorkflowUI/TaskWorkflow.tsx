@@ -33,28 +33,28 @@ export function TaskWorkflow({ messages, query }: TaskWorkflowProps) {
     const [latestMessageId, setLatestMessageId] = useState<string | null>(null);
     
     // Auto-scroll to bottom when new messages arrive
-    useEffect(() => {
-        if (messages.length > prevMessagesLengthRef.current) {
-            // Set the latest message for animation
-            if (messages.length > 0) {
-                const sortedMsgs = [...messages].sort((a, b) => 
-                    new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
-                );
-                setLatestMessageId(sortedMsgs[0].id);
-            }
+    // useEffect(() => {
+    //     if (messages.length > prevMessagesLengthRef.current) {
+    //         // Set the latest message for animation
+    //         if (messages.length > 0) {
+    //             const sortedMsgs = [...messages].sort((a, b) => 
+    //                 new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+    //             );
+    //             setLatestMessageId(sortedMsgs[0].id);
+    //         }
             
-            // Smooth scroll to bottom
-            setTimeout(() => {
-                messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-            }, 100);
+    //         // Smooth scroll to bottom
+    //         setTimeout(() => {
+    //             messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    //         }, 100);
             
-            // Reset animation class after animation completes
-            setTimeout(() => {
-                setLatestMessageId(null);
-            }, 800);
-        }
-        prevMessagesLengthRef.current = messages.length;
-    }, [messages]);
+    //         // Reset animation class after animation completes
+    //         setTimeout(() => {
+    //             setLatestMessageId(null);
+    //         }, 800);
+    //     }
+    //     prevMessagesLengthRef.current = messages.length;
+    // }, [messages]);
     
     if (messages.length === 0) {
         return (

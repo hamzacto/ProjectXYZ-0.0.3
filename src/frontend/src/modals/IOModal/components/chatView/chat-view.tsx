@@ -33,6 +33,7 @@ export default function ChatView({
   visibleSession,
   focusChat,
   closeChat,
+  standardizeTimestamp,
 }: chatViewProps): JSX.Element {
   const flowPool = useFlowStore((state) => state.flowPool);
   const inputs = useFlowStore((state) => state.inputs);
@@ -96,6 +97,13 @@ export default function ChatView({
         };
       });
     const finalChatHistory = [...messagesFromMessagesStore].sort((a, b) => {
+      // Use standardizeTimestamp if available
+      if (standardizeTimestamp) {
+        const timestampA = standardizeTimestamp(a.timestamp);
+        const timestampB = standardizeTimestamp(b.timestamp);
+        return new Date(timestampA).getTime() - new Date(timestampB).getTime();
+      }
+      // Fall back to direct timestamp comparison
       return new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
     });
 
@@ -108,7 +116,7 @@ export default function ChatView({
     }
 
     setChatHistory(finalChatHistory);
-  }, [flowPool, messages, visibleSession]);
+  }, [flowPool, messages, visibleSession, standardizeTimestamp]);
   useEffect(() => {
     if (messagesRef.current) {
       messagesRef.current.scrollTop = messagesRef.current.scrollHeight;

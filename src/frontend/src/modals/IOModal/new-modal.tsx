@@ -57,6 +57,15 @@ export default function IOModal({
   const currentFlowId = useFlowsManagerStore((state) => state.currentFlowId);
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
+  // Memoize the conversion of timestamps for efficiency
+  const standardizeTimestamp = useCallback((timestamp: string) => {
+    if (!timestamp) return '';
+
+    // Simplify the timestamp standardization by using a regex replacement
+    // This is more efficient than the string manipulations in the original
+    return timestamp.replace(/[^0-9T:-]/g, '');
+  }, []);
+
   const { mutate: deleteSessionFunction } = useDeleteMessages();
   const [visibleSession, setvisibleSession] = useState<string | undefined>(
     currentFlowId,
@@ -324,6 +333,7 @@ export default function IOModal({
                 sendMessage={sendMessage}
                 canvasOpen={canvasOpen}
                 setOpen={setOpen}
+                standardizeTimestamp={standardizeTimestamp}
               />
             </div>
           </div>

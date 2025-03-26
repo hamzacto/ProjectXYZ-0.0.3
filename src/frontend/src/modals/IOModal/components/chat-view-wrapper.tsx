@@ -21,6 +21,7 @@ export const ChatViewWrapper = ({
   sendMessage,
   canvasOpen,
   setOpen,
+  standardizeTimestamp,
 }: ChatViewWrapperProps) => {
   return (
     <div
@@ -99,6 +100,7 @@ export const ChatViewWrapper = ({
                     setOpen(false);
                   }
             }
+            standardizeTimestamp={standardizeTimestamp}
           />
         )}
       </div>

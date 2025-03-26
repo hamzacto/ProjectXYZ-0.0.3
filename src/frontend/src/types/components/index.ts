@@ -772,6 +772,7 @@ export type chatViewProps = {
   visibleSession?: string;
   focusChat?: string;
   closeChat?: () => void;
+  standardizeTimestamp?: (timestamp: string) => string;
 };
 
 export type IOFileInputProps = {
