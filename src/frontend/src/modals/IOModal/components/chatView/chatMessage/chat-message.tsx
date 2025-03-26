@@ -14,9 +14,11 @@ import IconComponent, {
   ForwardedIconComponent,
 } from "../../../../../components/common/genericIconComponent";
 import SanitizedHTMLWrapper from "../../../../../components/common/sanitizedHTMLWrapper";
+import { Card } from "../../../../../components/ui/card";
 import { EMPTY_INPUT_SEND_MESSAGE } from "../../../../../constants/constants";
 import useTabVisibility from "../../../../../shared/hooks/use-tab-visibility";
 import useAlertStore from "../../../../../stores/alertStore";
+import { useDarkStore } from "../../../../../stores/darkStore";
 import { chatMessagePropsType } from "../../../../../types/components";
 import { cn } from "../../../../../utils/utils";
 import { ErrorView } from "./components/content-view";
@@ -49,6 +51,7 @@ export default function ChatMessage({
   const [editMessage, setEditMessage] = useState(false);
   const [showError, setShowError] = useState(false);
   const isBuilding = useFlowStore((state) => state.isBuilding);
+  const dark = useDarkStore((state) => state.dark);
 
   useEffect(() => {
     const chatMessageString = chat.message ? chat.message.toString() : "";
@@ -227,29 +230,89 @@ export default function ChatMessage({
     );
   }
 
+  // Set background and text colors based on dark mode for user messages
+  const backgroundColor = dark ? "#303030" : "#f3f3f3";
+  const textColor = dark ? "white" : "black";
+
   return (
     <>
-      <div className="w-5/6 max-w-[768px] py-4 word-break-break-word">
-        <div
-          className={cn(
-            "group relative flex w-full gap-4 rounded-md p-2",
-            editMessage ? "" : "hover:bg-muted",
-          )}
-        >
+      {chat.isSend ? (
+        // User message styled to match UserMessage.tsx
+        <div className="w-5/6 max-w-[768px] py-6 word-break-break-word">
+          <div className="flex justify-end w-full">
+            <div className="relative group max-w-[80%]">
+              {/* Invisible extended hover area */}
+              <div className="absolute inset-0 -bottom-10 z-0"></div>
+              <Card 
+                className="w-full py-3 px-4 message-transition rounded-3xl shadow-none border-0 transition-colors duration-200" 
+                style={{ backgroundColor, color: textColor }}
+              >
+                {editMessage ? (
+                  <EditMessageField
+                    key={`edit-message-${chat.id}`}
+                    message={decodedMessage}
+                    onEdit={(message) => {
+                      handleEditMessage(message);
+                    }}
+                    onCancel={() => setEditMessage(false)}
+                  />
+                ) : (
+                  <span className="whitespace-pre-wrap break-words text-[14px]" data-testid={`chat-message-${chat.sender_name}-${chatMessage}`}>
+                    {isEmpty ? EMPTY_INPUT_SEND_MESSAGE : decodedMessage}
+                    {editedFlag}
+                  </span>
+                )}
+                {chat.files && chat.files.length > 0 && (
+                  <div className="my-2 flex flex-col gap-5">
+                    {chat.files?.map((file, index) => {
+                      return <FileCardWrapper key={index} index={index} path={file} />;
+                    })}
+                  </div>
+                )}
+              </Card>
+              {!editMessage && (
+                <div className="invisible absolute -bottom-8 right-0 group-hover:visible opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
+                  <div>
+                    <EditMessageButton
+                      onCopy={() => {
+                        navigator.clipboard.writeText(chatMessage);
+                      }}
+                      onDelete={() => {}}
+                      onEdit={() => setEditMessage(true)}
+                      className="h-fit group-hover:visible"
+                      isBotMessage={!chat.isSend}
+                      onEvaluate={handleEvaluateAnswer}
+                      evaluation={chat.properties?.positive_feedback}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+          <div id={lastMessage ? "last-chat-message" : undefined} />
+        </div>
+      ) : (
+        // Original AI message implementation kept intact
+        <div className="w-5/6 max-w-[768px] py-6 word-break-break-word">
           <div
             className={cn(
-              "relative flex h-[32px] w-[32px] items-center justify-center overflow-hidden rounded-md text-2xl",
-              !chat.isSend
-                ? "bg-muted"
-                : "border border-border hover:border-input",
+              "group relative flex w-full gap-4 rounded-md p-2",
+              editMessage ? "" : "hover:bg-muted",
             )}
-            style={
-              chat.properties?.background_color
-                ? { backgroundColor: chat.properties.background_color }
-                : {}
-            }
           >
-            {!chat.isSend ? (
+            {/* Invisible extended hover area */}
+            <div className="absolute inset-0 -bottom-10 z-0"></div>
+            <div
+              className={cn(
+                "relative flex h-[32px] w-[32px] items-center justify-center overflow-hidden rounded-md text-2xl",
+                "bg-muted"
+              )}
+              style={
+                chat.properties?.background_color
+                  ? { backgroundColor: chat.properties.background_color }
+                  : {}
+              }
+            >
               <div className="flex h-[18px] w-[18px] items-center justify-center">
                 {chat.properties?.icon ? (
                   chat.properties.icon.match(
@@ -267,61 +330,43 @@ export default function ChatMessage({
                   />
                 )}
               </div>
-            ) : (
-              <div className="flex h-[18px] w-[18px] items-center justify-center">
-                {chat.properties?.icon ? (
-                  chat.properties.icon.match(
-                    /[\u2600-\u27BF\uD83C-\uDBFF\uDC00-\uDFFF]/,
-                  ) ? (
-                    <div className="">{chat.properties.icon}</div>
-                  ) : (
-                    <ForwardedIconComponent name={chat.properties.icon} />
-                  )
-                ) : !ENABLE_DATASTAX_LANGFLOW ? (
-                  <ProfileIcon />
-                ) : (
-                  <CustomProfileIcon />
-                )}
-              </div>
-            )}
-          </div>
-          <div className="flex w-[94%] flex-col">
-            <div>
-              <div
-                className={cn(
-                  "flex max-w-full items-baseline gap-3 truncate pb-2 text-[14px] font-semibold",
-                )}
-                style={
-                  chat.properties?.text_color
-                    ? { color: chat.properties.text_color }
-                    : {}
-                }
-                data-testid={
-                  "sender_name_" + chat.sender_name?.toLocaleLowerCase()
-                }
-              >
-                {chat.sender_name}
-                {chat.properties?.source && (
-                  <div className="text-[13px] font-normal text-muted-foreground">
-                    {chat.properties?.source.source}
-                  </div>
-                )}
-              </div>
             </div>
-            {chat.content_blocks && chat.content_blocks.length > 0 && (
-              <ContentBlockDisplay
-                contentBlocks={chat.content_blocks}
-                isLoading={
-                  chatMessage === "" &&
-                  chat.properties?.state === "partial" &&
-                  isBuilding &&
-                  lastMessage
-                }
-                state={chat.properties?.state}
-                chatId={chat.id}
-              />
-            )}
-            {!chat.isSend ? (
+            <div className="flex w-[94%] flex-col">
+              <div>
+                <div
+                  className={cn(
+                    "flex max-w-full items-baseline gap-3 truncate pb-2 text-[14px] font-semibold",
+                  )}
+                  style={
+                    chat.properties?.text_color
+                      ? { color: chat.properties.text_color }
+                      : {}
+                  }
+                  data-testid={
+                    "sender_name_" + chat.sender_name?.toLocaleLowerCase()
+                  }
+                >
+                  {chat.sender_name}
+                  {chat.properties?.source && (
+                    <div className="text-[13px] font-normal text-muted-foreground">
+                      {chat.properties?.source.source}
+                    </div>
+                  )}
+                </div>
+              </div>
+              {chat.content_blocks && chat.content_blocks.length > 0 && (
+                <ContentBlockDisplay
+                  contentBlocks={chat.content_blocks}
+                  isLoading={
+                    chatMessage === "" &&
+                    chat.properties?.state === "partial" &&
+                    isBuilding &&
+                    lastMessage
+                  }
+                  state={chat.properties?.state}
+                  chatId={chat.id}
+                />
+              )}
               <div className="form-modal-chat-text-position flex-grow">
                 <div className="form-modal-chat-text">
                   {hidden && chat.thought && chat.thought !== "" && (
@@ -385,62 +430,28 @@ export default function ChatMessage({
                   </div>
                 </div>
               </div>
-            ) : (
-              <div className="form-modal-chat-text-position flex-grow">
-                <div className="flex w-full flex-col">
-                  {editMessage ? (
-                    <EditMessageField
-                      key={`edit-message-${chat.id}`}
-                      message={decodedMessage}
-                      onEdit={(message) => {
-                        handleEditMessage(message);
-                      }}
-                      onCancel={() => setEditMessage(false)}
-                    />
-                  ) : (
-                    <>
-                      <div
-                        className={`w-full items-baseline whitespace-pre-wrap break-words text-[14px] font-normal ${
-                          isEmpty ? "text-muted-foreground" : "text-primary"
-                        }`}
-                        data-testid={`chat-message-${chat.sender_name}-${chatMessage}`}
-                      >
-                        {isEmpty ? EMPTY_INPUT_SEND_MESSAGE : decodedMessage}
-                        {editedFlag}
-                      </div>
-                    </>
-                  )}
-                  {chat.files && (
-                    <div className="my-2 flex flex-col gap-5">
-                      {chat.files?.map((file, index) => {
-                        return <FileCardWrapper index={index} path={file} />;
-                      })}
-                    </div>
-                  )}
+            </div>
+            {!editMessage && (
+              <div className="invisible absolute -bottom-8 left-0 group-hover:visible opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
+                <div>
+                  <EditMessageButton
+                    onCopy={() => {
+                      navigator.clipboard.writeText(chatMessage);
+                    }}
+                    onDelete={() => {}}
+                    onEdit={() => setEditMessage(true)}
+                    className="h-fit group-hover:visible"
+                    isBotMessage={!chat.isSend}
+                    onEvaluate={handleEvaluateAnswer}
+                    evaluation={chat.properties?.positive_feedback}
+                  />
                 </div>
               </div>
             )}
           </div>
-          {!editMessage && (
-            <div className="invisible absolute -top-4 right-0 group-hover:visible">
-              <div>
-                <EditMessageButton
-                  onCopy={() => {
-                    navigator.clipboard.writeText(chatMessage);
-                  }}
-                  onDelete={() => {}}
-                  onEdit={() => setEditMessage(true)}
-                  className="h-fit group-hover:visible"
-                  isBotMessage={!chat.isSend}
-                  onEvaluate={handleEvaluateAnswer}
-                  evaluation={chat.properties?.positive_feedback}
-                />
-              </div>
-            </div>
-          )}
+          <div id={lastMessage ? "last-chat-message" : undefined} />
         </div>
-      </div>
-      <div id={lastMessage ? "last-chat-message" : undefined} />
+      )}
     </>
   );
 }

@@ -31,16 +31,16 @@ export function EditMessageButton({
   };
 
   return (
-    <div className="flex items-center rounded-md border border-border bg-background">
-      <ShadTooltip styleClasses="z-50" content="Edit message" side="top">
-        <div className="p-1">
+    <div className="flex items-center rounded-md bg-background/95 shadow-sm scale-90">
+      <ShadTooltip styleClasses="z-50" content="Edit message" side="bottom">
+        <div className="p-0.5">
           <Button
             variant="ghost"
-            size="icon"
+            size="iconSm"
             onClick={onEdit}
-            className="h-8 w-8"
+            className="h-6 w-6"
           >
-            <IconComponent name="Pen" className="h-4 w-4" />
+            <IconComponent name="Pen" className="h-3 w-3" />
           </Button>
         </div>
       </ShadTooltip>
@@ -48,18 +48,18 @@ export function EditMessageButton({
       <ShadTooltip
         styleClasses="z-50"
         content={isCopied ? "Copied!" : "Copy message"}
-        side="top"
+        side="bottom"
       >
-        <div className="p-1">
+        <div className="p-0.5">
           <Button
             variant="ghost"
-            size="icon"
+            size="iconSm"
             onClick={handleCopy}
-            className="h-8 w-8"
+            className="h-6 w-6"
           >
             <IconComponent
               name={isCopied ? "Check" : "Copy"}
-              className="h-4 w-4"
+              className="h-3 w-3"
             />
           </Button>
         </div>
@@ -67,37 +67,37 @@ export function EditMessageButton({
 
       {isBotMessage && (
         <div className="flex">
-          <ShadTooltip styleClasses="z-50" content="Helpful" side="top">
-            <div className="p-1">
+          <ShadTooltip styleClasses="z-50" content="Helpful" side="bottom">
+            <div className="p-0.5">
               <Button
                 variant="ghost"
-                size="icon"
+                size="iconSm"
                 onClick={() => handleEvaluate(true)}
-                className="h-8 w-8"
+                className="h-6 w-6"
                 data-testid="helpful-button"
               >
                 <IconComponent
                   name={evaluation === true ? "ThumbUpIconCustom" : "ThumbsUp"}
-                  className={cn("h-4 w-4")}
+                  className={cn("h-3 w-3")}
                 />
               </Button>
             </div>
           </ShadTooltip>
 
-          <ShadTooltip styleClasses="z-50" content="Not helpful" side="top">
-            <div className="p-1">
+          <ShadTooltip styleClasses="z-50" content="Not helpful" side="bottom">
+            <div className="p-0.5">
               <Button
                 variant="ghost"
-                size="icon"
+                size="iconSm"
                 onClick={() => handleEvaluate(false)}
-                className="h-8 w-8"
+                className="h-6 w-6"
                 data-testid="not-helpful-button"
               >
                 <IconComponent
                   name={
                     evaluation === false ? "ThumbDownIconCustom" : "ThumbsDown"
                   }
-                  className={cn("h-4 w-4")}
+                  className={cn("h-3 w-3")}
                 />
               </Button>
             </div>

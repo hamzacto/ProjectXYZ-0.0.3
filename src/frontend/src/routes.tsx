@@ -219,7 +219,8 @@ const router = createBrowserRouter(
                     </ProtectedAdminRoute>
                   }
                 />
-                <Route path="chat/:id" element={<ChatPage />} />
+                {/* <Route path="chat/:id" element={<ChatPage />} /> */}
+                <Route path="chat/:id" element={<PlaygroundPage />} />
               </Route>
               <Route path="flow/:id/">
                 <Route path="" element={<DashboardWrapperPage />}>
