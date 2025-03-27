@@ -241,11 +241,11 @@ export default function ChatMessage({
         <div className="w-5/6 max-w-[768px] py-6 word-break-break-word">
           <div className="flex justify-end w-full">
             <div className="relative group max-w-[80%]">
-              {/* Invisible extended hover area with increased z-index */}
-              <div className="absolute inset-0 -bottom-12 z-10"></div>
+              {/* Extended hover area below the message */}
+              <div className="absolute -bottom-10 left-0 right-0 h-12 z-10"></div>
               <Card 
                 className={cn(
-                  "w-full py-3 px-4 rounded-3xl shadow-none border-0 transition-none",
+                  "w-full py-3 px-4 rounded-3xl shadow-none border-0 transition-none relative z-20",
                   editMessage ? "z-30 overflow-visible bg-background" : ""
                 )}
                 style={editMessage ? {} : { backgroundColor, color: textColor }}
