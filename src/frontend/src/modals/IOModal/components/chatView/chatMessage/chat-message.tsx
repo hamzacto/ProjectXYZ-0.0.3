@@ -241,21 +241,26 @@ export default function ChatMessage({
         <div className="w-5/6 max-w-[768px] py-6 word-break-break-word">
           <div className="flex justify-end w-full">
             <div className="relative group max-w-[80%]">
-              {/* Invisible extended hover area */}
-              <div className="absolute inset-0 -bottom-10 z-0"></div>
+              {/* Invisible extended hover area with increased z-index */}
+              <div className="absolute inset-0 -bottom-12 z-10"></div>
               <Card 
-                className="w-full py-3 px-4 message-transition rounded-3xl shadow-none border-0 transition-colors duration-200" 
-                style={{ backgroundColor, color: textColor }}
+                className={cn(
+                  "w-full py-3 px-4 rounded-3xl shadow-none border-0 transition-none",
+                  editMessage ? "z-30 overflow-visible bg-background" : ""
+                )}
+                style={editMessage ? {} : { backgroundColor, color: textColor }}
               >
                 {editMessage ? (
-                  <EditMessageField
-                    key={`edit-message-${chat.id}`}
-                    message={decodedMessage}
-                    onEdit={(message) => {
-                      handleEditMessage(message);
-                    }}
-                    onCancel={() => setEditMessage(false)}
-                  />
+                  <div className="z-50">
+                    <EditMessageField
+                      key={`edit-message-${chat.id}`}
+                      message={decodedMessage}
+                      onEdit={(message) => {
+                        handleEditMessage(message);
+                      }}
+                      onCancel={() => setEditMessage(false)}
+                    />
+                  </div>
                 ) : (
                   <span className="whitespace-pre-wrap break-words text-[14px]" data-testid={`chat-message-${chat.sender_name}-${chatMessage}`}>
                     {isEmpty ? EMPTY_INPUT_SEND_MESSAGE : decodedMessage}
