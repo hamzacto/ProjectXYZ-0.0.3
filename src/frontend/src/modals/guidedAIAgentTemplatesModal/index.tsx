@@ -67,6 +67,7 @@ export default function GuidedAIAgentTemplatesModal({
     const [name, setName] = useState("");
     const [description, setDescription] = useState("");
     const [prompt, setPrompt] = useState("");
+    const [icon, setIcon] = useState("robot");
     const examples = useFlowsManagerStore((state) => state.examples);
     var flow = examples.find((example) => example.name === "Guided Agent");
     const setSuccessData = useAlertStore((state) => state.setSuccessData);
@@ -1617,6 +1618,8 @@ export default function GuidedAIAgentTemplatesModal({
                 ],
                 viewport: defaultViewport, // Add this line to fix the error
             },
+            icon: icon, // Make sure icon is set explicitly
+            is_component: false
         };
 
         if (fileCategories[0].files.length > 0) {
@@ -1641,6 +1644,7 @@ export default function GuidedAIAgentTemplatesModal({
             description,
             prompt,
             collectionName,
+            icon,
             tools: addedTools.map(tool => ({ 
                 id: tool.key || tool.display_name,
                 display_name: tool.display_name,
@@ -1767,6 +1771,7 @@ export default function GuidedAIAgentTemplatesModal({
                             currentTab={currentTab}
                             setCurrentTab={setCurrentTab}
                             agentName={name}
+                            agentAvatar={icon}
                         />
                         <main className="flex flex-1 flex-col gap-4 overflow-hidden p-6 md:gap-8">
                             {currentTab === "guided-ai-agent" ? (
@@ -1775,6 +1780,8 @@ export default function GuidedAIAgentTemplatesModal({
                                     setName={setName}
                                     description={description}
                                     setDescription={setDescription}
+                                    icon={icon}
+                                    setIcon={setIcon}
                                 /> // Render the CreateAIAgentComponent when currentTab is "AI Agent"
                             ) : currentTab === "core-instructions" ? (
                                 <GuidedAiAgentCoreInstructions

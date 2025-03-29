@@ -13,6 +13,9 @@ interface IPatchUpdateFlow {
   folder_id: string | null | undefined;
   endpoint_name: string | null | undefined;
   locked?: boolean | null | undefined;
+  icon?: string | null | undefined;
+  icon_bg_color?: string | null | undefined;
+  gradient?: string | null | undefined;
 }
 
 export const usePatchUpdateFlow: useMutationFunctionType<
@@ -29,6 +32,9 @@ export const usePatchUpdateFlow: useMutationFunctionType<
       folder_id: payload.folder_id || null,
       endpoint_name: payload.endpoint_name || null,
       locked: payload.locked || false,
+      icon: payload.icon || null,
+      icon_bg_color: payload.icon_bg_color || null,
+      gradient: payload.gradient || null,
     });
 
     return response.data;

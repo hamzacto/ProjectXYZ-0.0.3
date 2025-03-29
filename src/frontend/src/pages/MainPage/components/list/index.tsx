@@ -14,7 +14,7 @@ import FlowSettingsModal from "@/modals/flowSettingsModal";
 import useAlertStore from "@/stores/alertStore";
 import useFlowsManagerStore from "@/stores/flowsManagerStore";
 import { FlowType } from "@/types/flow";
-import { swatchColors } from "@/utils/styleUtils";
+import { swatchColors, swatchAvatar } from "@/utils/styleUtils";
 import { cn, getNumberFromString } from "@/utils/utils";
 import { useState } from "react";
 import { useParams } from "react-router-dom";
@@ -75,6 +75,12 @@ const ListComponent = ({ flowData }: { flowData: FlowType }) => {
       : getNumberFromString(flowData.gradient ?? flowData.id)) %
     swatchColors.length;
 
+  const avatarIndex = 15;
+  
+  // Check if icon starts with "Avatar"
+  const isAvatarIcon = flowData?.icon && flowData.icon.startsWith("Avatar");
+  const colorSwatch = isAvatarIcon ? swatchAvatar : swatchColors;
+  
   return (
     <>
       <Card
@@ -96,14 +102,14 @@ const ListComponent = ({ flowData }: { flowData: FlowType }) => {
           {/* Icon */}
           <div
             className={cn(
-              `item-center flex justify-center rounded-lg p-3`,
-              swatchColors[swatchIndex],
+              `grid place-items-center h-14 w-14 rounded-lg p-0 bg-transparent`,
+              colorSwatch[swatchIndex],
             )}
           >
             <ForwardedIconComponent
               name={flowData?.icon || getIcon()}
               aria-hidden="true"
-              className="flex h-5 w-5 items-center justify-center"
+              className="h-10 w-10"
             />
           </div>
 
@@ -180,7 +186,7 @@ const ListComponent = ({ flowData }: { flowData: FlowType }) => {
         open={openSettings}
         setOpen={setOpenSettings}
         flowData={flowData}
-        details
+        nameLists={[]}
       />
     </>
   );

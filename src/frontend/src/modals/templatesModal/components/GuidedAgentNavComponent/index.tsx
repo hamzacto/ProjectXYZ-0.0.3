@@ -18,13 +18,15 @@ import { NavProps } from "../../../../types/templates/types";
 
 interface GuidedAgentNavProps extends NavProps {
   agentName: string;
+  agentAvatar: string;
 }
 
 export function GuidedAgentNavComponent({
   categories,
   currentTab,
   setCurrentTab,
-  agentName
+  agentName,
+  agentAvatar
 }: GuidedAgentNavProps) {
   const isMobile = useIsMobile();
 
@@ -39,6 +41,11 @@ export function GuidedAgentNavComponent({
             className={cn(
               "flex h-8 shrink-0 items-center rounded-md text-lg font-semibold leading-none tracking-tight text-primary outline-none ring-ring transition-[margin,opa] duration-200 ease-linear focus-visible:ring-1 md:hidden [&>svg]:size-4 [&>svg]:shrink-0",
             )}
+          />
+          <ForwardedIconComponent
+            name={agentAvatar}
+            aria-hidden="true"
+            className="h-8 w-8"
           />
           <div
             className={cn(

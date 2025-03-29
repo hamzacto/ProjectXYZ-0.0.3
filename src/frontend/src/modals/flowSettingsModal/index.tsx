@@ -60,7 +60,8 @@ export default function FlowSettingsModal({
     name: string,
     description: string,
     flow_id: string,
-    endpoint_name?: string
+    endpoint_name?: string,
+    icon?: string
   ) => Promise<void>;
 }) {
   const saveFlow = useSaveFlow();
@@ -74,12 +75,14 @@ export default function FlowSettingsModal({
   useEffect(() => {
     setName(flow?.name ?? "");
     setDescription(flow?.description ?? "");
-  }, [flow?.name, flow?.description, open]);
+    setIcon(flow?.icon ?? "robot");
+  }, [flow?.name, flow?.description, flow?.icon, open]);
   const [flowedges, setflowedges] = useEdgesState<Edge<any>>([]);
   // Initialize state with safe values
   const [name, setName] = useState(flowData?.name || "");
   const [description, setDescription] = useState(flowData?.description || "");
   const [endpoint_name, setEndpointName] = useState(flowData?.endpoint_name || "");
+  const [icon, setIcon] = useState(flowData?.icon || "robot");
   const [isSaving, setIsSaving] = useState(false);
   const [disableSave, setDisableSave] = useState(true);
   const autoSaving = useFlowsManagerStore((state) => state.autoSaving);
@@ -225,6 +228,11 @@ export default function FlowSettingsModal({
           setSelectedTriggers(metadata.triggers || []);
           setFileCategories(metadata.knowledgeBase?.categories || [{ id: 'default', name: 'General', files: [] }]);
 
+          // Set appearance settings if available
+          if (metadata.appearance?.icon) {
+            setIcon(metadata.appearance.icon);
+          }
+
           // Set advanced settings with defaults for any missing properties
           if (metadata.advancedSettings) {
             setAdvancedSettings({
@@ -254,6 +262,7 @@ export default function FlowSettingsModal({
       setName(flowData.name || "");
       setDescription(flowData.description || "");
       setEndpointName(flowData.endpoint_name || "");
+      setIcon(flowData.icon || "robot");
     }
   }, [flowData]);
 
@@ -989,14 +998,15 @@ export default function FlowSettingsModal({
 
         // Use provided onUpdate function or fallback to saveFlow
         if (onUpdate) {
-          await onUpdate(name, description, updatedFlow.id, endpoint_name);
+          await onUpdate(name, description, updatedFlow.id, endpoint_name, icon);
         } else {
           // Use the saveFlow hook as a fallback
           await saveFlow({
             ...updatedFlow,
             name,
             description,
-            endpoint_name
+            endpoint_name,
+            icon
           });
         }
 
@@ -1103,6 +1113,11 @@ export default function FlowSettingsModal({
             nodes,
             edges
           },
+          appearance: {
+            icon,
+            icon_bg_color: flow?.icon_bg_color,
+            gradient: flow?.gradient
+          },
           advancedSettings,
         };
 
@@ -1113,7 +1128,8 @@ export default function FlowSettingsModal({
           ...updatedFlow,
           name,
           description,
-          endpoint_name
+          endpoint_name,
+          icon
         };
         
         // Update the FlowsManagerStore which will update both currentFlow and currentFlowId
@@ -1218,6 +1234,7 @@ export default function FlowSettingsModal({
               currentTab={currentTab}
               setCurrentTab={setCurrentTab}
               agentName={name}
+              agentAvatar={icon}
             />
             <main className="flex flex-1 flex-col gap-4 overflow-hidden p-6 md:gap-8">
               {currentTab === "guided-ai-agent" ? (
@@ -1226,6 +1243,8 @@ export default function FlowSettingsModal({
                   setName={setName}
                   description={description}
                   setDescription={setDescription}
+                  icon={icon}
+                  setIcon={setIcon}
                 /> // Render the CreateAIAgentComponent when currentTab is "AI Agent"
               ) : currentTab === "core-instructions" ? (
                 <GuidedAiAgentCoreInstructions
