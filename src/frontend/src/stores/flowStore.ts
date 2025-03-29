@@ -595,6 +595,7 @@ const useFlowStore = create<FlowStoreType>((set, get) => ({
     silent,
     session,
     stream = true,
+    clientMessageId,
   }: {
     startNodeId?: string;
     stopNodeId?: string;
@@ -603,6 +604,7 @@ const useFlowStore = create<FlowStoreType>((set, get) => ({
     silent?: boolean;
     session?: string;
     stream?: boolean;
+    clientMessageId?: string;
   }) => {
     get().setIsBuilding(true);
     const currentFlow = useFlowsManagerStore.getState().currentFlow;
@@ -752,6 +754,7 @@ const useFlowStore = create<FlowStoreType>((set, get) => ({
       flowId: currentFlow!.id,
       startNodeId,
       stopNodeId,
+      clientMessageId,
       onGetOrderSuccess: () => {
         if (!silent) {
           setNoticeData({ title: "Running components" });

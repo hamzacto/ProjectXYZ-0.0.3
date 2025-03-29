@@ -13,7 +13,7 @@ export type ChatViewWrapperProps = {
   haveChat: { type: string; id: string; displayName: string } | undefined;
   messagesFetched: boolean;
   sessionId: string;
-  sendMessage: (options: { repeat: number; files?: string[] }) => Promise<void>;
+  sendMessage: (options: { repeat: number; files?: string[]; clientMessageId?: string }) => Promise<void>;
   canvasOpen: boolean | undefined;
   setOpen: (open: boolean) => void;
   standardizeTimestamp?: (timestamp: string) => string;

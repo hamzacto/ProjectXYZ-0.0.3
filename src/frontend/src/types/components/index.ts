@@ -765,9 +765,11 @@ export type chatViewProps = {
   sendMessage: ({
     repeat,
     files,
+    clientMessageId,
   }: {
     repeat: number;
     files?: string[];
+    clientMessageId?: string;
   }) => void;
   visibleSession?: string;
   focusChat?: string;

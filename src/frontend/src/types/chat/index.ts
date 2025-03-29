@@ -20,6 +20,10 @@ export type ChatMessageType = {
   category?: string;
   properties?: PropertiesType;
   content_blocks?: ContentBlock[];
+  backend_message_id?: string;
+  backend_text?: string;
+  backend_data?: any;
+  is_optimistic?: boolean;
 };
 
 export type SourceType = {

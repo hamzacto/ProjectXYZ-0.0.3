@@ -15,6 +15,7 @@ type Message = {
   category?: string;
   properties?: any;
   content_blocks?: ContentBlock[];
+  clientMessageId?: string;
 };
 
 export type { Message };

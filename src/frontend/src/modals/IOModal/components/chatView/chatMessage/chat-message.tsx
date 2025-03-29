@@ -8,7 +8,7 @@ import useFlowStore from "@/stores/flowStore";
 import { useUtilityStore } from "@/stores/utilityStore";
 import { ChatMessageType } from "@/types/chat";
 import Convert from "ansi-to-html";
-import { useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState, useMemo } from "react";
 import Robot from "../../../../../assets/robot.png";
 import IconComponent, {
   ForwardedIconComponent,
@@ -28,22 +28,26 @@ import FileCardWrapper from "./components/file-card-wrapper";
 import { EditMessageButton } from "./components/message-options";
 import { convertFiles } from "./helpers/convert-files";
 
-export default function ChatMessage({
+// Main function wrapped in memo for consistent reference identity
+const ChatMessage = ({
   chat,
   lastMessage,
   updateChat,
   closeChat,
-}: chatMessagePropsType): JSX.Element {
+}: chatMessagePropsType): JSX.Element => {
   const convert = new Convert({ newline: true });
   const [hidden, setHidden] = useState(true);
   const [streamUrl, setStreamUrl] = useState(chat.stream_url);
   const flow_id = useFlowsManagerStore((state) => state.currentFlowId);
   const fitViewNode = useFlowStore((state) => state.fitViewNode);
+  
+  // Preserve message identity for user messages to prevent flickering
+  const initialMessage = useRef(chat.message ? chat.message.toString() : "");
+  const isUserMessage = chat.isSend;
+  
   // We need to check if message is not undefined because
   // we need to run .toString() on it
-  const [chatMessage, setChatMessage] = useState(
-    chat.message ? chat.message.toString() : "",
-  );
+  const [chatMessage, setChatMessage] = useState(initialMessage.current);
   const [isStreaming, setIsStreaming] = useState(false);
   const eventSource = useRef<EventSource | undefined>(undefined);
   const setErrorData = useAlertStore((state) => state.setErrorData);
@@ -53,11 +57,15 @@ export default function ChatMessage({
   const isBuilding = useFlowStore((state) => state.isBuilding);
   const dark = useDarkStore((state) => state.dark);
 
+  // Only update message from props if it's not a user message 
+  // (prevents flickering from backend updates to user messages)
   useEffect(() => {
-    const chatMessageString = chat.message ? chat.message.toString() : "";
-    setChatMessage(chatMessageString);
-    chatMessageRef.current = chatMessage;
-  }, [chat, isBuilding]);
+    if (!isUserMessage) {
+      const chatMessageString = chat.message ? chat.message.toString() : "";
+      setChatMessage(chatMessageString);
+      chatMessageRef.current = chatMessageString;
+    }
+  }, [chat, isBuilding, isUserMessage]);
 
   const playgroundScrollBehaves = useUtilityStore(
     (state) => state.playgroundScrollBehaves,
@@ -65,11 +73,24 @@ export default function ChatMessage({
   const setPlaygroundScrollBehaves = useUtilityStore(
     (state) => state.setPlaygroundScrollBehaves,
   );
+  
+  // Add a ref to track if user is actively scrolling - shared across all chat messages
+  const isUserScrolling = useUtilityStore(
+    (state) => state.isUserScrolling || false,
+  );
+  
+  // Get/set the bottom visibility state from the store
+  const isAtBottom = useUtilityStore(
+    (state) => state.isAtBottomOfChat || true,
+  );
+  const setIsAtBottomOfChat = useUtilityStore(
+    (state) => state.setIsAtBottomOfChat || (() => {}),
+  );
 
   // The idea now is that chat.stream_url MAY be a URL if we should stream the output of the chat
   // probably the message is empty when we have a stream_url
   // what we need is to update the chat_message with the SSE data
-  const streamChunks = (url: string) => {
+  const streamChunks = useCallback((url: string) => {
     setIsStreaming(true); // Streaming starts
     return new Promise<boolean>((resolve, reject) => {
       eventSource.current = new EventSource(url);
@@ -99,7 +120,7 @@ export default function ChatMessage({
         resolve(true);
       });
     });
-  };
+  }, [chat, setErrorData, updateChat]);
 
   useEffect(() => {
     if (streamUrl && !isStreaming) {
@@ -113,7 +134,8 @@ export default function ChatMessage({
           console.error(error);
         });
     }
-  }, [streamUrl, chatMessage]);
+  }, [streamUrl, chatMessage, streamChunks, updateChat]);
+  
   useEffect(() => {
     return () => {
       eventSource.current?.close();
@@ -122,19 +144,15 @@ export default function ChatMessage({
 
   const isTabHidden = useTabVisibility();
 
+  // Completely remove scroll-to-bottom behavior
   useEffect(() => {
-    const element = document.getElementById("last-chat-message");
-    if (element && isTabHidden) {
-      if (playgroundScrollBehaves === "instant") {
-        element.scrollIntoView({ behavior: playgroundScrollBehaves });
-        setPlaygroundScrollBehaves("smooth");
-      } else {
-        setTimeout(() => {
-          element.scrollIntoView({ behavior: playgroundScrollBehaves });
-        }, 200);
-      }
+    // No auto-scrolling functionality
+    // Only keep the lastMessage marker for accessibility
+    if (lastMessage) {
+      const element = document.getElementById("last-chat-message");
+      // No scrolling, just ensure the element has proper ID
     }
-  }, [lastMessage, chat]);
+  }, [lastMessage]);
 
   useEffect(() => {
     if (chat.category === "error") {
@@ -156,27 +174,84 @@ export default function ChatMessage({
   const { mutate: updateMessageMutation } = useUpdateMessage();
 
   const handleEditMessage = (message: string) => {
+    // Add more detailed logging
+    console.log("Edit attempt for message:", {
+      id: chat.id,
+      hasBackendData: !!chat.backend_data,
+      backend_id: chat.backend_message_id,
+      message: chat.message,
+      is_optimistic: chat.is_optimistic
+    });
+
+    // Check if this is an optimistic message that can't be edited yet
+    if (chat.is_optimistic) {
+      setErrorData({
+        title: "Cannot edit yet",
+        list: ["This message is still being processed by the server. Please wait a moment before editing."]
+      });
+      return;
+    }
+
+    // For user messages, make sure we have backend data
+    if (chat.isSend && !chat.backend_data) {
+      setErrorData({
+        title: "Cannot edit message",
+        list: ["This message doesn't have the necessary data for editing. Please try again later."]
+      });
+      return;
+    }
+
+    // Use backend data if available, otherwise fall back to chat data
+    const backendData = chat.backend_data || chat;
+    const messageId = chat.backend_message_id || chat.id;
+    const sessionId = backendData.session_id || chat.session || "";
+    
+    console.log("Sending edit with:", {
+      messageId,
+      sessionId,
+      text: message
+    });
+    
     updateMessageMutation(
       {
         message: {
-          ...chat,
+          ...backendData,
           files: convertFiles(chat.files),
           sender_name: chat.sender_name ?? "AI",
           text: message,
           sender: chat.isSend ? "User" : "Machine",
           flow_id,
-          session_id: chat.session ?? "",
+          session_id: sessionId,
+          id: messageId
         },
-        refetch: true,
+        refetch: false,
       },
       {
-        onSuccess: () => {
+        onSuccess: (data) => {
+          console.log("Edit successful:", data);
+          
+          // Update the message locally in this component
+          setChatMessage(message);
+          chatMessageRef.current = message;
+          
+          // Update the chat locally without waiting for backend refresh
           updateChat(chat, message);
+          
+          // Mark this message as edited
+          chat.edit = true;
+          
+          // Exit edit mode
           setEditMessage(false);
+          
+          // Force re-render to show edit flag immediately
+          setForceUpdate(prev => !prev);
         },
-        onError: () => {
+        onError: (error) => {
+          console.error("Error updating message:", error);
+          const errorDetail = error?.response?.data?.detail || "Unknown error";
           setErrorData({
-            title: "Error updating messages.",
+            title: "Error updating message",
+            list: [errorDetail]
           });
         },
       },
@@ -184,16 +259,22 @@ export default function ChatMessage({
   };
 
   const handleEvaluateAnswer = (evaluation: boolean | null) => {
+    // Use backend data if available, otherwise fall back to chat data
+    const backendData = chat.backend_data || chat;
+    const messageId = chat.backend_message_id || chat.id;
+    const sessionId = backendData.session_id || chat.session || "";
+    
     updateMessageMutation(
       {
         message: {
-          ...chat,
+          ...backendData,
           files: convertFiles(chat.files),
           sender_name: chat.sender_name ?? "AI",
           text: chat.message.toString(),
           sender: chat.isSend ? "User" : "Machine",
           flow_id,
-          session_id: chat.session ?? "",
+          session_id: sessionId,
+          id: messageId,
           properties: {
             ...chat.properties,
             positive_feedback: evaluation,
@@ -211,9 +292,17 @@ export default function ChatMessage({
     );
   };
 
-  const editedFlag = chat.edit ? (
-    <div className="text-sm text-muted-foreground">(Edited)</div>
-  ) : null;
+  // Add forceUpdate state to trigger re-renders
+  const [forceUpdate, setForceUpdate] = useState(false);
+
+  // Use a memoized version of the edited flag that updates when edit status changes
+  const editedFlag = useMemo(() => 
+    chat.edit ? (
+      <div className="text-sm text-muted-foreground" key={`edited-${chat.id}-${String(chat.edit)}-${forceUpdate}`}>
+        (Edited)
+      </div>
+    ) : null
+  , [chat.id, chat.edit, forceUpdate]);
 
   if (chat.category === "error") {
     const blocks = chat.content_blocks ?? [];
@@ -459,4 +548,7 @@ export default function ChatMessage({
       )}
     </>
   );
-}
+};
+
+// Export a memoized version to prevent unnecessary renders
+export default memo(ChatMessage);

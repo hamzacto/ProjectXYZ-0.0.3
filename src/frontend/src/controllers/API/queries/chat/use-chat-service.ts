@@ -12,6 +12,7 @@ export interface Message {
   text: string;
   files: string | Array<FileAttachment>;
   edit: boolean;
+  clientMessageId?: string; // Client-side message ID for mapping optimistic messages
   properties: {
     text_color: string;
     background_color: string;

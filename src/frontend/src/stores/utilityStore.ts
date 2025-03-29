@@ -35,4 +35,10 @@ export const useUtilityStore = create<UtilityStoreType>((set, get) => ({
   setTags: (tags: Tag[]) => set({ tags }),
   featureFlags: {},
   setFeatureFlags: (featureFlags: Record<string, any>) => set({ featureFlags }),
+  
+  // Add properties for chat scrolling
+  isUserScrolling: false,
+  setIsUserScrolling: (isScrolling: boolean) => set({ isUserScrolling: isScrolling }),
+  isAtBottomOfChat: true,
+  setIsAtBottomOfChat: (isAtBottom: boolean) => set({ isAtBottomOfChat: isAtBottom }),
 }));

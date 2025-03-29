@@ -39,6 +39,7 @@ type BuildVerticesParams = {
   logBuilds?: boolean;
   session?: string;
   stream?: boolean;
+  clientMessageId?: string; // Add client message ID for tracking optimistic updates
 };
 
 function getInactiveVertexData(vertexId: string): VertexBuildTypeAPI {
@@ -220,6 +221,7 @@ export async function buildFlowVertices({
   logBuilds,
   session,
   stream = true,
+  clientMessageId,
 }: BuildVerticesParams) {
   const inputs = {};
   let buildUrl = `${BASE_URL_API}build/${flowId}/flow`;
@@ -255,6 +257,10 @@ export async function buildFlowVertices({
   if (session) {
     inputs["session"] = session;
   }
+  // Temporarily disable clientMessageId until backend supports it
+  // if (clientMessageId) {
+  //   inputs["client_message_id"] = clientMessageId;
+  // }
   if (Object.keys(inputs).length > 0) {
     postData["inputs"] = inputs;
   }

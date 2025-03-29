@@ -19,4 +19,8 @@ export type UtilityStoreType = {
   setChatValueStore: (value: string) => void;
   dismissAll: boolean;
   setDismissAll: (dismissAll: boolean) => void;
+  isUserScrolling: boolean;
+  setIsUserScrolling: (isScrolling: boolean) => void;
+  isAtBottomOfChat: boolean;
+  setIsAtBottomOfChat: (isAtBottom: boolean) => void;
 };

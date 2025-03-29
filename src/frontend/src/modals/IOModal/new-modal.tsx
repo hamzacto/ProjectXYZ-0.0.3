@@ -155,9 +155,11 @@ export default function IOModal({
     async ({
       repeat = 1,
       files,
+      clientMessageId,
     }: {
       repeat: number;
       files?: string[];
+      clientMessageId?: string;
     }): Promise<void> => {
       if (isBuilding) return;
       setChatValue("");
@@ -169,6 +171,7 @@ export default function IOModal({
           silent: true,
           session: sessionId,
           stream: shouldStreamEvents(),
+          clientMessageId: clientMessageId,
         }).catch((err) => {
           console.error(err);
         });

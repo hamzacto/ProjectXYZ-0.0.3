@@ -147,6 +147,7 @@ export type FlowStoreType = {
     silent,
     session,
     stream,
+    clientMessageId,
   }: {
     startNodeId?: string;
     stopNodeId?: string;
@@ -155,6 +156,7 @@ export type FlowStoreType = {
     silent?: boolean;
     session?: string;
     stream?: boolean;
+    clientMessageId?: string;
   }) => Promise<void>;
   getFlow: () => { nodes: Node[]; edges: EdgeType[]; viewport: Viewport };
   updateVerticesBuild: (
