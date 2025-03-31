@@ -101,6 +101,9 @@ export default function ChatView({
   const [flowIcon, setFlowIcon] = useState<string | null>(null);
   const [flowName, setFlowName] = useState<string | null>(null);
 
+  // Add state to track temporary padding after sending messages
+  const [temporaryPadding, setTemporaryPadding] = useState<number>(0);
+
   // Fetch flow data to get icon and name
   useEffect(() => {
     const fetchFlowDetails = async () => {
@@ -642,7 +645,15 @@ export default function ChatView({
     // AND auto-scrolling is not disabled
     const disableAutoScroll = useUtilityStore.getState().disableAutoScroll;
     if (messagesRef.current && !sessionTransitioning && !disableAutoScroll) {
-      messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
+      // Use requestAnimationFrame to ensure scroll happens after DOM rendering
+      requestAnimationFrame(() => {
+        if (messagesRef.current && !useUtilityStore.getState().disableAutoScroll) {
+          messagesRef.current.scrollTo({
+            top: messagesRef.current.scrollHeight,
+            behavior: 'smooth'
+          });
+        }
+      });
     }
   }, [chatHistory, messageMap.size, sessionTransitioning]);
 
@@ -654,9 +665,15 @@ export default function ChatView({
     if (!sessionTransitioning && messagesRef.current && !disableAutoScroll) {
       // Use a small delay to ensure the DOM has updated
       setTimeout(() => {
-        if (messagesRef.current && !useUtilityStore.getState().disableAutoScroll) {
-          messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
-        }
+        // Use requestAnimationFrame for more reliable scrolling
+        requestAnimationFrame(() => {
+          if (messagesRef.current && !useUtilityStore.getState().disableAutoScroll) {
+            messagesRef.current.scrollTo({
+              top: messagesRef.current.scrollHeight,
+              behavior: 'smooth'
+            });
+          }
+        });
       }, 50);
     }
   }, [sessionTransitioning]);
@@ -1107,6 +1124,18 @@ export default function ChatView({
     }
   }, [editedMessagesMap, messageMap.size, visibleSession]);
 
+  // Add a function to apply and then remove temporary padding
+  const applyTemporaryPadding = useCallback(() => {
+    // Apply significant padding to push old messages up
+    setTemporaryPadding(300);  // Start with more dramatic padding
+    
+    // Gradually reduce the padding to create a smooth settling effect
+    setTimeout(() => setTemporaryPadding(250), 80);
+    setTimeout(() => setTemporaryPadding(200), 160);
+    setTimeout(() => setTemporaryPadding(150), 240);
+    setTimeout(() => setTemporaryPadding(100), 320);
+  }, []);
+
   // Ensure optimistic messages are always displayed immediately
   useEffect(() => {
     // When a new optimistic message is added to messageMap, update chatHistory immediately
@@ -1126,10 +1155,71 @@ export default function ChatView({
         
         if (newMessages.length === 0) return prev;
         
+        // If we're adding new messages, first do an immediate scroll
+        // to ensure we're starting from the right position
+        if (newMessages.length > 0 && !useUtilityStore.getState().disableAutoScroll) {
+          // First do an immediate scroll
+          if (messagesRef.current) {
+            messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
+          }
+          
+          // Then schedule a smooth follow-up scroll to handle any DOM changes
+          requestAnimationFrame(() => {
+            if (messagesRef.current) {
+              messagesRef.current.scrollTo({
+                top: messagesRef.current.scrollHeight,
+                behavior: 'smooth'
+              });
+            }
+            
+            // Apply padding effect to push older messages up
+            applyTemporaryPadding();
+          });
+        }
+        
         return [...prev, ...newMessages];
       });
     }
-  }, [messageMap, visibleSession, editedMessageIds]);
+  }, [messageMap, visibleSession, editedMessageIds, applyTemporaryPadding]);
+
+  // Function to scroll to bottom immediately after DOM update
+  const scrollToBottomImmediately = useCallback((immediate = false) => {
+    if (!messagesRef.current) return;
+    
+    // For immediate scroll operations (like when sending), use instant scroll first
+    // then follow with smooth scroll for a polished effect
+    if (immediate) {
+      // Instant scroll first to ensure content is visible immediately
+      messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
+      
+      // Then smooth scroll to handle any additional content that might render
+      requestAnimationFrame(() => {
+        if (messagesRef.current) {
+          messagesRef.current.scrollTo({
+            top: messagesRef.current.scrollHeight,
+            behavior: 'smooth'
+          });
+        }
+      });
+      return;
+    }
+    
+    // For regular scroll operations (like history updates), use smooth behavior
+    messagesRef.current.scrollTo({
+      top: messagesRef.current.scrollHeight,
+      behavior: 'smooth'
+    });
+    
+    // Follow-up scroll for reliability
+    requestAnimationFrame(() => {
+      if (messagesRef.current) {
+        messagesRef.current.scrollTo({
+          top: messagesRef.current.scrollHeight,
+          behavior: 'smooth'
+        });
+      }
+    });
+  }, []);
 
   return (
     <div
@@ -1140,7 +1230,17 @@ export default function ChatView({
       onDrop={onDrop}
     >
 
-      <div ref={messagesRef} className="chat-message-div pb-10">
+      <div 
+        ref={messagesRef} 
+        className="chat-message-div pb-10" 
+        style={{ 
+          scrollBehavior: 'smooth',
+          overflowY: 'auto',
+          overflowX: 'hidden',
+          paddingBottom: temporaryPadding ? `${temporaryPadding}px` : undefined,
+          transition: 'padding-bottom 0.1s ease-out'  // Add transition for smoother padding changes
+        }}
+      >
         {/* Show a loading state when transitioning between sessions */}
         {sessionTransitioning ? (
           <div className="flex h-full w-full flex-col items-center justify-center">
@@ -1247,13 +1347,25 @@ export default function ChatView({
               .replace('T', ' ')
               .replace(/\.\d+Z$/, ' UTC');
             
-            // Generate a proper UUID that the backend will accept
+            // Step 1: Clear input immediately to improve responsiveness
+            // Do this first before other operations
+            const messageText = chatValueStore; // Save message text
+            setChatValueStore(""); // Clear input field
+            
+            // Step 2: Instant scroll BEFORE any state updates or UI changes
+            // This ensures we're already at the bottom before the message appears
+            if (messagesRef.current) {
+              // Force immediate scroll first
+              messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
+            }
+            
+            // Step 3: Generate a proper UUID that the backend will accept
             const messageId = uuidv4();
             
-            // Create optimistic message
+            // Step 4: Create optimistic message
             const optimistic: ChatMessageType = {
               isSend: true,
-              message: chatValueStore,
+              message: messageText,
               sender_name: "User",
               files: files || [],
               id: messageId,
@@ -1274,34 +1386,34 @@ export default function ChatView({
               is_optimistic: true // Explicitly mark as optimistic
             };
             
-            // Add the message ID to our tracking set
+            // Step 5: Add the message ID to our tracking set
             setOptimisticMessageIds(prev => {
               const newSet = new Set(prev);
               newSet.add(messageId);
               return newSet;
             });
             
+            // Step 6: Update all state in one synchronous batch
             // Log the current state
             console.log("Is new session (state):", isNewSession);
             
-            // Add the message to our persistent map
+            // Update message map with new optimistic message
             setMessageMap(prev => {
               const newMap = new Map(prev);
               newMap.set(messageId, optimistic);
               return newMap;
             });
             
-            // For ALL messages, update the chat history directly
-            // This ensures the optimistic message appears immediately
-            // First force create an empty history if none exists
+            // Initialize chat history if needed
             if (!chatHistory) {
               setChatHistory([]);
             }
             
-            // Then add the optimistic message
+            // Add optimistic message to chat history
             setChatHistory(prev => {
               const newHistory = prev ? [...prev] : [];
-              // Only add if not already present to avoid duplicates
+              
+              // Only add if not already present
               const isDuplicate = newHistory.some(msg => 
                 msg.is_optimistic && msg.id === optimistic.id
               );
@@ -1309,18 +1421,23 @@ export default function ChatView({
               if (!isDuplicate) {
                 console.log("Adding optimistic message to chat history");
                 newHistory.push(optimistic);
+                
+                // Apply the temporary padding effect after adding the message
+                requestAnimationFrame(() => {
+                  applyTemporaryPadding();
+                });
               }
               return newHistory;
             });
             
-            // Always update the optimistic message reference for consistent display
+            // Update optimistic message reference
             setOptimisticMessage(optimistic);
             
-            // Clear input immediately to improve responsiveness
-            setChatValueStore("");
+            // Step 7: Ensure scroll with immediate flag (important!)
+            // This combines immediate response with smooth follow-up
+            scrollToBottomImmediately(true);
             
-            // ALWAYS send the message to the backend, even if it's a duplicate
-            // This allows the agent to process the same message multiple times if the user wants
+            // Step 8: Send the message to the backend
             sendMessage({ 
               repeat, 
               files: files || [], 
