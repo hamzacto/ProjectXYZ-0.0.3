@@ -21,9 +21,9 @@ export default function GuidedAgentIntegrationsPage(): JSX.Element {
               <div className="flex items-center gap-4">
                 <ForwardedIconComponent name="Google" className="h-8 w-8" />
                 <div>
-                  <h3 className="text-lg font-medium">Gmail Integration</h3>
+                  <h3 className="text-lg font-medium">Google Workspace</h3>
                   <p className="text-sm text-muted-foreground">
-                    Connect your Gmail account to enable email capabilities
+                    Connect your Google Workspace account to enable email, calendar, and sheets capabilities
                   </p>
                 </div>
               </div>
@@ -43,7 +43,7 @@ export default function GuidedAgentIntegrationsPage(): JSX.Element {
               <div className="flex items-center gap-4">
                 <ForwardedIconComponent name="Slack" className="h-8 w-8" />
                 <div>
-                  <h3 className="text-lg font-medium">Slack Integration</h3>
+                  <h3 className="text-lg font-medium">Slack</h3>
                   <p className="text-sm text-muted-foreground">
                     Connect to Slack to enable messaging capabilities
                   </p>
@@ -65,7 +65,7 @@ export default function GuidedAgentIntegrationsPage(): JSX.Element {
               <div className="flex items-center gap-4">
                 <ForwardedIconComponent name="HubSpot" className="h-8 w-8" />
                 <div>
-                  <h3 className="text-lg font-medium">HubSpot Integration</h3>
+                  <h3 className="text-lg font-medium">HubSpot</h3>
                   <p className="text-sm text-muted-foreground">
                     Connect to HubSpot CRM to access contacts, companies, and deals
                   </p>

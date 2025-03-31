@@ -8,6 +8,7 @@ interface SubagentsSidebarItemsListProps {
   onAddSubagent: (subagent: any) => void;
   addedSubagents: any[];
   addSubagent: (subagent: any) => void;
+  flowIcons: Record<string, string>;
 }
 
 const SubagentsSidebarItemsList: FC<SubagentsSidebarItemsListProps> = ({
@@ -17,6 +18,7 @@ const SubagentsSidebarItemsList: FC<SubagentsSidebarItemsListProps> = ({
   onAddSubagent,
   addedSubagents,
   addSubagent,
+  flowIcons,
 }) => {
   return (
     <div className="flex flex-col gap-1 py-2">
@@ -27,13 +29,14 @@ const SubagentsSidebarItemsList: FC<SubagentsSidebarItemsListProps> = ({
       ) : (
         flows.map((flow) => {
           const isAdded = addedSubagents.some(subagent => subagent.id === flow.id);
+          const flowIcon = flowIcons[flow.id] || flow.icon || "Sparkles";
           
           return (
             <SubagentSidebarDraggableComponent
               key={flow.id}
               sectionName="subagents"
               subagent={flow}
-              icon="git-fork"
+              icon={flowIcon}
               onDragStart={(event) =>
                 onDragStart(event, {
                   type: "subagent",

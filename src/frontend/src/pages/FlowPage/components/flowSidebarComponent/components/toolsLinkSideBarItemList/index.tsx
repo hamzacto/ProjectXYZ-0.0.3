@@ -24,11 +24,40 @@ const ToolsLinkSidebarItemsList: React.FC<ToolsLinkSidebarItemsListProps> = ({
     addedTools,
     addTool,
 }) => {
+    const tools_to_hide = ['Astra DB CQL', 
+        'Astra DB Tool',
+        'Calculator [DEPRECATED]',
+        'Google Search API', 
+        'Google Serper API', 
+        'Google Serper API [DEPRECATED]',
+        'MCP Tools (SSE)','MCP Tools (stdio)', 
+        'Python Code Structured', 
+        'Python REPL',
+        'Python REPL [DEPRECATED]', 
+        'Search API', 
+        'Search API [DEPRECATED]', 
+        'SearXNG Search', 
+        'Serp Search API', 
+        'Serp Search API [DEPRECATED]', 
+        'Tavily AI Search', 
+        'Tavily AI Search [DEPRECATED]' 
+        ,'Wikidata', 
+        'Wikidata API [Deprecated]', 
+        'Wikipedia API [Deprecated]',
+        'WolframAlpha API',
+        'Yahoo Finance',
+        'Yahoo Finance [DEPRECATED]']
+
     // Helper function to check if a tool is already added
     const isToolAdded = (tool: any) => {
         return addedTools.some(addedTool => 
             addedTool.display_name === tool.display_name
         );
+    };
+
+    // Helper function to check if a tool should be hidden
+    const shouldHideTool = (tool: any) => {
+        return tools_to_hide.includes(tool.display_name);
     };
 
     return (
@@ -41,6 +70,7 @@ const ToolsLinkSidebarItemsList: React.FC<ToolsLinkSidebarItemsListProps> = ({
                         ? itemA.score - itemB.score
                         : sensitiveSort(itemA.display_name, itemB.display_name);
                 })
+                .filter(SBItemName => !shouldHideTool(dataFilter[item.name][SBItemName]))
                 .map((SBItemName, idx) => {
                     const currentItem = dataFilter[item.name][SBItemName];
                     const isAdded = isToolAdded(currentItem);

@@ -14,6 +14,8 @@ import AvatarBookAuthorIcon from '@/icons/AvatarBookAuthor/AvatarBookAuthor';
 import AvatarDetectiveIcon from '@/icons/AvatarDetectiveIcon/AvatarDetectiveIcon';
 import AvatarAstronautIcon from '@/icons/AvatarAstonaut/AvatarAstronautIcon';
 import AvatarCyberpunckIcon from '@/icons/AvatarCyberpunck/AvatarCyberpunckIcon';
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+
 const swatchIndex = 15;
 // Define available avatar options
 const AGENT_AVATARS = [
@@ -28,6 +30,7 @@ const AGENT_AVATARS = [
 
 export default function CreateAIAgentComponent({ name, setName, description, setDescription, icon, setIcon }) {
     const [selectedAvatar, setSelectedAvatar] = useState(icon || AGENT_AVATARS[0].id);
+    const [showAvatarModal, setShowAvatarModal] = useState(false);
     
     // Initialize icon if not set and keep selectedAvatar in sync
     useEffect(() => {
@@ -46,7 +49,11 @@ export default function CreateAIAgentComponent({ name, setName, description, set
         if (setIcon) {
             setIcon(avatarId);
         }
+        setShowAvatarModal(false);
     };
+
+    // Find the selected avatar object
+    const selectedAvatarObj = AGENT_AVATARS.find(avatar => avatar.id === selectedAvatar) || AGENT_AVATARS[0];
 
     return (
         <div className="flex flex-1 flex-col gap-4 md:gap-8">
@@ -61,36 +68,44 @@ export default function CreateAIAgentComponent({ name, setName, description, set
                     <label className="text-sm font-medium text-gray-700 dark:text-gray-200">
                         Agent Avatar
                     </label>
-                    <div className="flex flex-wrap gap-4">
-                        {AGENT_AVATARS.map((avatar) => {
-                            return (
-                                <button
-                                    key={avatar.id}
-                                    type="button"
-                                    className={cn(
-                                        "flex flex-col items-center justify-center rounded-lg border-2 transition-all",
-                                        selectedAvatar === avatar.id
-                                            ? "border-blue-500 bg-blue-50 dark:bg-blue-900/20"
-                                            : "border-gray-200 hover:border-gray-300 dark:border-gray-700 dark:hover:border-gray-600"
-                                    )}
-                                    onClick={() => handleAvatarSelect(avatar.id)}
-                                >
-                                    {/* Icon */}
-                                    <div
-                                        className={cn(
-                                            `grid place-items-center h-20 w-20 rounded-lg p-0 bg-transparent`,
-                                            swatchColors[swatchIndex],
-                                        )}
-                                    >
-                                        <ForwardedIconComponent
-                                            name={avatar.name}
-                                            aria-hidden="true"
-                                            className="h-16 w-16"
-                                        />
-                                    </div>
-                                </button>
-                            );
-                        })}
+                    <div className="flex gap-4">
+                        {/* Selected Avatar */}
+                        <button
+                            type="button"
+                            className={cn(
+                                "flex flex-col items-center justify-center rounded-lg border-2 transition-all",
+                                "border-blue-500 bg-blue-50 dark:bg-blue-900/20"
+                            )}
+                        >
+                            <div
+                                className={cn(
+                                    `grid place-items-center h-20 w-20 rounded-lg p-0 bg-transparent`,
+                                    swatchColors[swatchIndex],
+                                )}
+                            >
+                                <ForwardedIconComponent
+                                    name={selectedAvatarObj.name}
+                                    aria-hidden="true"
+                                    className="h-16 w-16"
+                                />
+                            </div>
+                        </button>
+
+                        {/* Plus Button */}
+                        <button
+                            type="button"
+                            className={cn(
+                                "flex flex-col items-center justify-center rounded-lg border-2 transition-all h-20 w-20",
+                                "border-gray-200 hover:border-gray-300 dark:border-gray-700 dark:hover:border-gray-600"
+                            )}
+                            onClick={() => setShowAvatarModal(true)}
+                        >
+                            <ForwardedIconComponent
+                                name="Plus"
+                                aria-hidden="true"
+                                className="h-10 w-10 text-gray-400"
+                            />
+                        </button>
                     </div>
                 </div>
                 <div className="flex flex-col gap-2">
@@ -118,6 +133,41 @@ export default function CreateAIAgentComponent({ name, setName, description, set
                     />
                 </div>
             </div>
+
+            {/* Avatar Selection Modal */}
+            <Dialog open={showAvatarModal} onOpenChange={setShowAvatarModal}>
+                <DialogContent className="sm:max-w-md">
+                    <DialogTitle>Choose Agent Avatar</DialogTitle>
+                    <div className="flex flex-wrap gap-4 mt-4">
+                        {AGENT_AVATARS.map((avatar) => (
+                            <button
+                                key={avatar.id}
+                                type="button"
+                                className={cn(
+                                    "flex flex-col items-center justify-center rounded-lg border-2 transition-all",
+                                    selectedAvatar === avatar.id
+                                        ? "border-blue-500 bg-blue-50 dark:bg-blue-900/20"
+                                        : "border-gray-200 hover:border-gray-300 dark:border-gray-700 dark:hover:border-gray-600"
+                                )}
+                                onClick={() => handleAvatarSelect(avatar.id)}
+                            >
+                                <div
+                                    className={cn(
+                                        `grid place-items-center h-20 w-20 rounded-lg p-0 bg-transparent`,
+                                        swatchColors[swatchIndex],
+                                    )}
+                                >
+                                    <ForwardedIconComponent
+                                        name={avatar.name}
+                                        aria-hidden="true"
+                                        className="h-16 w-16"
+                                    />
+                                </div>
+                            </button>
+                        ))}
+                    </div>
+                </DialogContent>
+            </Dialog>
         </div>
     );
 }

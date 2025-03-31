@@ -1,10 +1,12 @@
-import { memo, useCallback } from "react";
+import { memo, useCallback, useState, useEffect } from "react";
 import { ForwardedIconComponent } from "@/components/common/genericIconComponent";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/utils/utils";
 import { AddedSubagentsList } from "./AddedSubagentsList";
 import SubagentsSidebarItemsList from "./SubagentsSidebarItemsList";
+import { api } from "../../../../controllers/API/api";
+import { getURL } from "../../../../controllers/API/helpers/constants";
 import "./index.css";
 
 // Type definitions
@@ -40,6 +42,49 @@ export const SubagentsCategoryDisclosure = memo(function SubagentsCategoryDisclo
   addedSubagents,
   deleteSubagent,
 }: SubagentsCategoryDisclosureProps) {
+  const [flowIcons, setFlowIcons] = useState<Record<string, string>>({});
+  
+  // Fetch icons for all flows and added subagents
+  useEffect(() => {
+    const fetchAllIcons = async () => {
+      try {
+        // Combine all flows to fetch icons for
+        const allFlows = [...flows, ...addedSubagents.filter(
+          subagent => !flows.some(flow => flow.id === subagent.id)
+        )];
+        
+        const fetchPromises = allFlows.map(async (flow) => {
+          if (flow.id) {
+            try {
+              const response = await api.get(`${getURL("FLOWS")}/${flow.id}`);
+              if (response.data && response.data.icon) {
+                return { id: flow.id, icon: response.data.icon };
+              }
+              return { id: flow.id, icon: "Sparkles" };
+            } catch (error) {
+              console.error(`Error fetching flow details for ${flow.id}:`, error);
+              return { id: flow.id, icon: "Sparkles" };
+            }
+          }
+          return null;
+        });
+
+        const results = await Promise.all(fetchPromises);
+        const iconsMap = results.reduce((acc, result) => {
+          if (result) {
+            acc[result.id] = result.icon;
+          }
+          return acc;
+        }, {});
+        
+        setFlowIcons(iconsMap);
+      } catch (error) {
+        console.error("Error fetching flow icons:", error);
+      }
+    };
+
+    fetchAllIcons();
+  }, [flows, addedSubagents]);
   
   const handleKeyDownInput = useCallback(
     (e: React.KeyboardEvent<HTMLDivElement>) => {
@@ -94,6 +139,7 @@ export const SubagentsCategoryDisclosure = memo(function SubagentsCategoryDisclo
               onAddSubagent={handleAddSubagent}
               addedSubagents={addedSubagents}
               addSubagent={addSubagent}
+              flowIcons={flowIcons}
             />
           </div>
         </div>
@@ -104,7 +150,8 @@ export const SubagentsCategoryDisclosure = memo(function SubagentsCategoryDisclo
         <SidebarProvider>
           <AddedSubagentsList 
             subagents={addedSubagents} 
-            deleteSubagent={deleteSubagent} 
+            deleteSubagent={deleteSubagent}
+            flowIcons={flowIcons}
           />
         </SidebarProvider>
       </div>

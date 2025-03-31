@@ -84,14 +84,14 @@ export default function GuidedAgentIntegrations() {
         <div className="space-y-6">
             <div className="flex items-center justify-between">
                 <div>
-                    <h2 className="text-lg font-semibold">Gmail Integrations</h2>
+                    <h2 className="text-lg font-semibold">Google Workspace</h2>
                     <p className="text-sm text-muted-foreground">
                         {integrations.length} {integrations.length === 1 ? 'account' : 'accounts'} connected
                     </p>
                 </div>
                 <Button onClick={connectGmail} className="gap-2">
                     <Plus className="h-4 w-4" />
-                    Connect Gmail
+                    Connect Google Account
                 </Button>
             </div>
 

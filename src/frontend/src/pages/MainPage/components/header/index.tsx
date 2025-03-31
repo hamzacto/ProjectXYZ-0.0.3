@@ -138,7 +138,7 @@ const HeaderComponent = ({
                 ))}
               </div>
             </div>
-            <ShadTooltip content="New Flow" side="bottom">
+            {/* <ShadTooltip content="New Flow" side="bottom">
               <Button
                 variant="default"
                 className="!px-3 md:!px-4 md:!pl-3.5"
@@ -155,7 +155,7 @@ const HeaderComponent = ({
                   New Flow2
                 </span>
               </Button>
-            </ShadTooltip>
+            </ShadTooltip> */}
             {/* NEW GUIDED AGENT FORM */}
             <ShadTooltip content="New Flow" side="bottom">
               <Button

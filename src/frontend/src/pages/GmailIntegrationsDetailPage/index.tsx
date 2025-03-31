@@ -112,12 +112,12 @@ export default function GmailIntegrationsDetailPage() {
 
     return (
         <PageLayout
-            title="Gmail Integration Details"
-            description="Manage your connected Gmail accounts and their permissions"
+            title="Google Workspace Integration Details"
+            description="Manage your connected Google Workspace accounts and their permissions"
             button={
                 <Button onClick={connectGmail} className="gap-2">
                     <Plus className="h-4 w-4" />
-                    Connect Gmail
+                    Connect Google Account
                 </Button>
             }
             backTo="/integrations"
@@ -146,7 +146,7 @@ export default function GmailIntegrationsDetailPage() {
                             <Card className="flex items-center justify-center p-8 text-center">
                                 <div className="space-y-3">
                                     <Mail className="mx-auto h-12 w-12 text-muted-foreground opacity-50" />
-                                    <p className="text-muted-foreground mt-3">No Gmail accounts connected</p>
+                                    <p className="text-muted-foreground mt-3">No Google Workspace accounts connected</p>
                                 </div>
                             </Card>
                         ) : (

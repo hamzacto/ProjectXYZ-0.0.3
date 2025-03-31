@@ -8,12 +8,14 @@ interface AddedSubagentsListProps {
   subagents: any[];
   deleteSubagent: (subagent: any) => void;
   addingSubagentId?: string;
+  flowIcons: Record<string, string>;
 }
 
 export const AddedSubagentsList = ({ 
   subagents, 
   deleteSubagent,
-  addingSubagentId
+  addingSubagentId,
+  flowIcons
 }: AddedSubagentsListProps) => {
   // Get the agent being added (if any)
   const addingSubagent = useMemo(() => {
@@ -66,7 +68,7 @@ export const AddedSubagentsList = ({
                 >
                   <div className="flex items-center gap-2 overflow-hidden">
                     <ForwardedIconComponent
-                      name="git-fork"
+                      name={flowIcons[addingSubagent.id] || addingSubagent.icon || "git-fork"}
                       className="h-4 w-4 shrink-0 text-primary"
                     />
                     <div className="overflow-hidden">
@@ -101,7 +103,7 @@ export const AddedSubagentsList = ({
                 >
                   <div className="flex items-center gap-2 overflow-hidden">
                     <ForwardedIconComponent
-                      name="git-fork"
+                      name={flowIcons[subagent.id] || subagent.icon || "git-fork"}
                       className="h-4 w-4 shrink-0 text-primary"
                     />
                     <div className="overflow-hidden">

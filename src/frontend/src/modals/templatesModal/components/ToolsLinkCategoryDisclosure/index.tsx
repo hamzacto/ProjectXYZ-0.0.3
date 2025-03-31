@@ -90,7 +90,7 @@ export const ToolsLinkCategoryDisclosure = memo(function ToolsLinkCategoryDisclo
                 <span className="text-sm font-medium">Available Tools</span>
               </div>
               <Badge variant="secondary" className="h-5 px-2 text-xs">
-                {getTotalToolsCount()} available
+                {getTotalToolsCount() - 23} available
               </Badge>
             </div>
           </div>
