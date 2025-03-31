@@ -1020,6 +1020,16 @@ export default function ChatModal({
     })) || [];
   }
 
+  // Clean up when unmounting
+  useEffect(() => {
+    return () => {
+      setSessionId("");
+      setvisibleSession(undefined);
+      setSelectedViewField(undefined);
+      setMessages([]);
+    };
+  }, [setSessionId, setvisibleSession, setSelectedViewField, setMessages]);
+
   return (
     <BaseModal
       open={open}
@@ -1170,7 +1180,7 @@ export default function ChatModal({
                               New chat
                             </h3>
                             <p className="text-lg text-muted-foreground">
-                              Test your flow with a chat prompt
+                              Test your agent with a chat prompt
                             </p>
                           </div>
                         </div>

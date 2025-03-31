@@ -231,6 +231,9 @@ class FlowUpdate(SQLModel):
     folder_id: UUID | None = None
     endpoint_name: str | None = None
     locked: bool | None = None
+    icon: str | None = None
+    icon_bg_color: str | None = None
+    gradient: str | None = None
 
     @field_validator("endpoint_name")
     @classmethod

@@ -12,6 +12,8 @@ import cloneFLowWithParent from "../../utils/storeUtils";
 export default function PlaygroundPage() {
   const setCurrentFlow = useFlowsManagerStore((state) => state.setCurrentFlow);
   const currentSavedFlow = useFlowsManagerStore((state) => state.currentFlow);
+  const flowToCanvas = useFlowsManagerStore((state) => state.flowToCanvas);
+  const setFlowToCanvas = useFlowsManagerStore((state) => state.setFlowToCanvas);
   const validApiKey = useStoreStore((state) => state.validApiKey);
   const { id } = useParams();
   const { mutateAsync: getFlow } = useGetFlow();
@@ -20,6 +22,15 @@ export default function PlaygroundPage() {
 
   const currentFlowId = useFlowsManagerStore((state) => state.currentFlowId);
   const setIsLoading = useFlowsManagerStore((state) => state.setIsLoading);
+
+  // Clean up flowToCanvas when unmounting to prevent stale data
+  useEffect(() => {
+    return () => {
+      setFlowToCanvas(null);
+      setCurrentFlow(undefined);
+      setIsLoading(false);
+    };
+  }, [setFlowToCanvas, setCurrentFlow, setIsLoading]);
 
   async function getFlowData() {
     try {
@@ -45,19 +56,28 @@ export default function PlaygroundPage() {
   useEffect(() => {
     const initializeFlow = async () => {
       setIsLoading(true);
-      if (currentFlowId === "") {
+      
+      // First check if we have a flowToCanvas and if it matches the current id
+      if (flowToCanvas && flowToCanvas.id === id) {
+        // Use the flowToCanvas data that was set when clicking the list item
+        setCurrentFlow(flowToCanvas);
+        setIsLoading(false);
+      } else if (currentFlowId === "") {
+        // Fall back to fetching from API if no flowToCanvas or id mismatch
         const flow = await getFlowData();
         if (flow) {
           setCurrentFlow(flow);
         } else {
           navigate("/");
         }
+        setIsLoading(false);
+      } else {
+        setIsLoading(false);
       }
     };
 
     initializeFlow();
-    setIsLoading(false);
-  }, [id, validApiKey]);
+  }, [id, validApiKey, flowToCanvas]); // Add flowToCanvas as a dependency
 
   useEffect(() => {
     if (id) track("Playground Page Loaded", { flowId: id });

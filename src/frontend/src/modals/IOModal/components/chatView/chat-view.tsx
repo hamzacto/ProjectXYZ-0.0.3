@@ -17,6 +17,9 @@ import useDragAndDrop from "./chatInput/hooks/use-drag-and-drop";
 import { useFileHandler } from "./chatInput/hooks/use-file-handler";
 import ChatMessage from "./chatMessage/chat-message";
 import { v4 as uuidv4 } from 'uuid';
+import ForwardedIconComponent from "@/components/common/genericIconComponent";
+import { api } from "../../../../controllers/API/api";
+import { getURL } from "../../../../controllers/API/helpers/constants";
 
 // Constants for localStorage
 const EDITED_MESSAGES_STORAGE_KEY = 'langflow_edited_messages';
@@ -89,6 +92,38 @@ export default function ChatView({
 
   // Enhanced logic to track edited message IDs
   const [editedMessageIds, setEditedMessageIds] = useState<Set<string>>(new Set());
+  
+  // Add a state to track session transitions
+  const [sessionTransitioning, setSessionTransitioning] = useState(false);
+  const previousVisibleSessionRef = useRef<string | undefined>(visibleSession);
+
+  // New state to store flow icon and name
+  const [flowIcon, setFlowIcon] = useState<string | null>(null);
+  const [flowName, setFlowName] = useState<string | null>(null);
+
+  // Fetch flow data to get icon and name
+  useEffect(() => {
+    const fetchFlowDetails = async () => {
+      if (currentFlowId) {
+        try {
+          const response = await api.get(`${getURL("FLOWS")}/${currentFlowId}`);
+          if (response.data && response.data.icon) {
+            setFlowIcon(response.data.icon);
+          } else {
+            setFlowIcon("Sparkles");
+          }
+          if (response.data && response.data.name) {
+            setFlowName(response.data.name);
+          }
+        } catch (error) {
+          console.error("Error fetching flow details:", error);
+          setFlowIcon("Sparkles");
+        }
+      }
+    };
+
+    fetchFlowDetails();
+  }, [currentFlowId]);
 
   // Load edited messages from localStorage on component mount
   useEffect(() => {
@@ -161,27 +196,36 @@ export default function ChatView({
 
   // Reset optimistic message state when changing sessions
   useEffect(() => {
-    // When session changes, clear the optimistic message
-    setOptimisticMessage(null);
-    
-    // Also clear the message map for messages that don't belong to this session
-    setMessageMap(prev => {
-      // Keep only messages that belong to the current session
-      const newMap = new Map();
+    // Check if this is a real session change
+    if (visibleSession !== previousVisibleSessionRef.current) {
+      // Mark that we're transitioning to a new session
+      setSessionTransitioning(true);
       
-      prev.forEach((msg, id) => {
-        if (msg.session === visibleSession) {
-          // If we're keeping this message, make sure it's not optimistic if edited
-          if (msg.edit) {
-            newMap.set(id, {...msg, is_optimistic: false});
-          } else {
-            newMap.set(id, msg);
+      // Update ref to current session
+      previousVisibleSessionRef.current = visibleSession;
+      
+      // When session changes, clear the optimistic message
+      setOptimisticMessage(null);
+      
+      // Also clear the message map for messages that don't belong to this session
+      setMessageMap(prev => {
+        // Keep only messages that belong to the current session
+        const newMap = new Map();
+        
+        prev.forEach((msg, id) => {
+          if (msg.session === visibleSession) {
+            // If we're keeping this message, make sure it's not optimistic if edited
+            if (msg.edit) {
+              newMap.set(id, {...msg, is_optimistic: false});
+            } else {
+              newMap.set(id, msg);
+            }
           }
-        }
+        });
+        
+        return newMap;
       });
-      
-      return newMap;
-    });
+    }
   }, [visibleSession]);
 
   // Add a visibility handler to clean up optimistic messages when returning from another tab
@@ -238,6 +282,24 @@ export default function ChatView({
       setIsNewSession(false);
     }
   }, [messages, currentFlowId, visibleSession]);
+
+  // Detect when chat history has been updated for the new session
+  useEffect(() => {
+    // If we're in a session transition and we now have the new chat history
+    if (sessionTransitioning && chatHistory) {
+      // We need to make sure the chat history matches the current session
+      const hasCurrentSessionMessages = chatHistory.some(
+        msg => msg.session === visibleSession
+      );
+      
+      if (hasCurrentSessionMessages || chatHistory.length === 0) {
+        // Turn off transitioning flag after a small delay to ensure UI is ready
+        setTimeout(() => {
+          setSessionTransitioning(false);
+        }, 50);
+      }
+    }
+  }, [chatHistory, sessionTransitioning, visibleSession]);
 
   //build chat history
   useEffect(() => {
@@ -530,10 +592,28 @@ export default function ChatView({
   
   // Scroll to bottom whenever chat history updates or when messageMap changes
   useEffect(() => {
-    if (messagesRef.current) {
+    // Only scroll if we're not in the middle of a session transition
+    // AND auto-scrolling is not disabled
+    const disableAutoScroll = useUtilityStore.getState().disableAutoScroll;
+    if (messagesRef.current && !sessionTransitioning && !disableAutoScroll) {
       messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
     }
-  }, [chatHistory, messageMap.size]);
+  }, [chatHistory, messageMap.size, sessionTransitioning]);
+
+  // Automatically scroll when session transition completes
+  useEffect(() => {
+    // When transitioning ends, scroll to bottom
+    // BUT only if auto-scrolling is not disabled
+    const disableAutoScroll = useUtilityStore.getState().disableAutoScroll;
+    if (!sessionTransitioning && messagesRef.current && !disableAutoScroll) {
+      // Use a small delay to ensure the DOM has updated
+      setTimeout(() => {
+        if (messagesRef.current && !useUtilityStore.getState().disableAutoScroll) {
+          messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
+        }
+      }, 50);
+    }
+  }, [sessionTransitioning]);
 
   const ref = useRef<HTMLDivElement | null>(null);
 
@@ -560,39 +640,53 @@ export default function ChatView({
 
   const flowRunningSkeletonMemo = useMemo(() => <FlowRunningSqueleton />, []);
 
-  // Update the displayChatHistory logic to properly deduplicate edited messages
-  const displayChatHistory = useMemo(() => {
+  // Step 1: Memoize the filtered session messages to avoid recomputation
+  const filteredSessionMessages = useMemo(() => {
     if (!chatHistory) return [];
     
     // Only show messages from the current session
-    const sessionMessages = chatHistory.filter(msg => 
+    return chatHistory.filter(msg => 
       msg.session === visibleSession || 
       (visibleSession === currentFlowId && !msg.session) ||
       // For new sessions, include messages with empty session ID
       (!visibleSession && !msg.session)
     );
-    
-    // IMPORTANT: For duplicate detection, we need to track conversation turns
-    // If there's an AI message between two user messages, they should be considered separate turns
-    
+  }, [chatHistory, visibleSession, currentFlowId]);
+  
+  // Step 2: Memoize the sorting operation separately
+  const sortedMessages = useMemo(() => {
     // First, sort messages by timestamp
-    const sortedMessages = [...sessionMessages].sort((a, b) => {
+    return [...filteredSessionMessages].sort((a, b) => {
       const timestampA = standardizeTimestamp ? standardizeTimestamp(a.timestamp) : a.timestamp;
       const timestampB = standardizeTimestamp ? standardizeTimestamp(b.timestamp) : b.timestamp;
       return new Date(timestampA).getTime() - new Date(timestampB).getTime();
     });
-    
+  }, [filteredSessionMessages, standardizeTimestamp]);
+
+  // Step 3: Extract the message content comparison function to avoid recreating it on each render
+  const getMessageContent = useCallback((message: any) => {
+    return typeof message === 'string' ? message : JSON.stringify(message);
+  }, []);
+  
+  // Step 4: Create a stable reference to the edited message IDs
+  const editedMessageIdsRef = useRef(editedMessageIds);
+  useEffect(() => {
+    editedMessageIdsRef.current = editedMessageIds;
+  }, [editedMessageIds]);
+
+  // Step 5: Optimize the main deduplication logic with proper dependencies
+  const displayChatHistory = useMemo(() => {
     // Process messages to maintain conversation turns and optimize display
     const result: ChatMessageType[] = [];
     
     // To track optimistic user messages that need backend data
-    const pendingOptimisticMessages = new Map<string, number>(); // content -> index in result
+    const pendingOptimisticMessages = new Map<string, number>();
     
     // Process chronologically to preserve conversation flow
     for (let i = 0; i < sortedMessages.length; i++) {
       const msg = sortedMessages[i];
       const isUserMessage = msg.isSend;
-      const messageContent = typeof msg.message === 'string' ? msg.message : JSON.stringify(msg.message);
+      const messageContent = getMessageContent(msg.message);
       
       // Try to find a recent optimistic version of this message to update
       if (!msg.is_optimistic && isUserMessage && pendingOptimisticMessages.has(messageContent)) {
@@ -624,46 +718,20 @@ export default function ChatView({
         // If we found a previous user message
         if (lastUserMsgIndex >= 0) {
           const lastUserMsg = result[lastUserMsgIndex];
-          const lastUserContent = typeof lastUserMsg.message === 'string' ? lastUserMsg.message : JSON.stringify(lastUserMsg.message);
+          const lastUserContent = getMessageContent(lastUserMsg.message);
           
           // Check if it has the same content and no AI messages between them
           if (lastUserContent === messageContent) {
             // Check if there was an AI message between these two user messages
             const hasAiMessageBetween = result.slice(lastUserMsgIndex + 1).some(m => !m.isSend);
             
-            // If no AI messages between and messages are close in time, it's likely a duplicate
+            // If there are no AI messages between and neither has been edited, consider it duplicate
             if (!hasAiMessageBetween && 
-                Math.abs(new Date(lastUserMsg.timestamp).getTime() - new Date(msg.timestamp).getTime()) < 5000) {
-              
-              // If the new message is not optimistic and the existing one is, update it
-              if (!msg.is_optimistic && lastUserMsg.is_optimistic) {
-                result[lastUserMsgIndex] = {
-                  ...lastUserMsg,
-                  backend_message_id: msg.id,
-                  backend_text: messageContent,
-                  backend_data: msg,
-                  // Keep is_optimistic true to prevent UI flicker
-                };
-                isDuplicate = true;
-              }
-              // If the new message is optimistic and the existing isn't, replace with optimistic
-              else if (msg.is_optimistic && !lastUserMsg.is_optimistic) {
-                result[lastUserMsgIndex] = {
-                  ...msg,
-                  backend_message_id: lastUserMsg.id,
-                  backend_text: lastUserContent,
-                  backend_data: lastUserMsg,
-                };
-                isDuplicate = true;
-              }
-              // If both are optimistic or both are not, keep the more recent one
-              else if ((msg.is_optimistic && lastUserMsg.is_optimistic) || 
-                      (!msg.is_optimistic && !lastUserMsg.is_optimistic)) {
-                if (new Date(msg.timestamp) > new Date(lastUserMsg.timestamp)) {
-                  result[lastUserMsgIndex] = msg;
-                }
-                isDuplicate = true;
-              }
+                !msg.edit && 
+                !lastUserMsg.edit && 
+                !editedMessageIdsRef.current.has(msg.id) && 
+                !editedMessageIdsRef.current.has(lastUserMsg.id)) {
+              isDuplicate = true;
             }
           }
         }
@@ -681,7 +749,7 @@ export default function ChatView({
     }
     
     return result;
-  }, [chatHistory, visibleSession, currentFlowId, standardizeTimestamp]);
+  }, [sortedMessages, getMessageContent]); // Only recalculate when sorted messages change or message content getter changes
 
   // Use useTransition to update the display history smoothly
   useEffect(() => {
@@ -692,17 +760,41 @@ export default function ChatView({
     }
   }, [displayChatHistory]);
 
-  // Create a stable array of keys for the chat messages to prevent unnecessary re-renders
-  const chatMessageKeys = useMemo(() => {
-    // Use a combination of ID and content to create stable keys
-    // This helps preserve component identity even when messages are updated
-    return stableDisplayHistory.map(chat => {
-      const contentKey = typeof chat.message === 'string' 
-        ? chat.message.substring(0, 20) // Use first 20 chars of message as part of key
-        : JSON.stringify(chat.message).substring(0, 20);
-      return `${chat.id}-${chat.is_optimistic ? 'opt' : 'reg'}-${contentKey}`;
-    });
-  }, [stableDisplayHistory]);
+  // Extract key generation function for better memoization
+  const generateMessageKey = useCallback((chat: ChatMessageType) => {
+    // Use ID as the primary stable identifier
+    const idPart = chat.id;
+    
+    // Add optimistic flag to distinguish between optimistic and regular messages
+    const typePart = chat.is_optimistic ? 'opt' : 'reg';
+    
+    // Use edit status to ensure edited messages get new keys
+    const editPart = chat.edit ? 'edited' : 'orig';
+    
+    // Include a content hash to detect content changes while keeping the key short
+    const contentPart = typeof chat.message === 'string' 
+      ? chat.message.substring(0, 10) // First 10 chars is enough for a basic fingerprint
+      : JSON.stringify(chat.message).substring(0, 10);
+    
+    // Combine all parts to create a stable yet sensitive key
+    return `${idPart}-${typePart}-${editPart}-${contentPart}`;
+  }, []);
+
+  // Memoize optimistic messages filtering and sorting for render efficiency
+  const optimisticMessagesToRender = useMemo(() => {
+    if (messageMap.size === 0) return [];
+    
+    return Array.from(messageMap.values())
+      .filter(m => m.is_optimistic && !editedMessageIdsRef.current.has(m.id))
+      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+  }, [messageMap, /* editedMessageIdsRef is intentionally omitted as we use the ref inside */]);
+
+  // Check if we have optimistic messages that should be displayed separate from history
+  const hasOptimisticMessagesToDisplay = useMemo(() => {
+    return messageMap.size > 0 && 
+           Array.from(messageMap.values()).some(m => m.is_optimistic) && 
+           (!displayChatHistory || displayChatHistory.length === 0);
+  }, [messageMap, displayChatHistory?.length]);
 
   // Memoize the updateChat function to maintain reference stability
   const updateChatMemoized = useCallback((
@@ -903,32 +995,42 @@ export default function ChatView({
       onDragLeave={dragLeave}
       onDrop={onDrop}
     >
+
       <div ref={messagesRef} className="chat-message-div pb-10">
-        {/* First check if we have an optimistic message but no chat history */}
-        {optimisticMessage && (!chatHistory || chatHistory.length === 0) && !editedMessageIds.has(optimisticMessage.id) ? (
+        {/* Show a loading state when transitioning between sessions */}
+        {sessionTransitioning ? (
+          <div className="flex h-full w-full flex-col items-center justify-center">
+            <div className="flex flex-col items-center justify-center gap-4 p-8">
+              <ForwardedIconComponent
+                name="Loader2"
+                className="h-8 w-8 animate-spin"
+              />
+              <div className="text-muted-foreground">Loading messages...</div>
+            </div>
+          </div>
+        ) : optimisticMessage && (!chatHistory || chatHistory.length === 0) && !editedMessageIds.has(optimisticMessage.id) ? (
           <MemoizedChatMessage
             chat={optimisticMessage}
             lastMessage={true}
             key={optimisticMessage.id}
             updateChat={updateChatMemoized}
             closeChat={closeChat}
+            flowIcon={flowIcon}
           />
         ) : /* Check if we have optimistic messages in a new session that should be displayed */
-        chatHistory && messageMap.size > 0 && Array.from(messageMap.values()).some(m => m.is_optimistic) && displayChatHistory?.length === 0 ? (
+        hasOptimisticMessagesToDisplay ? (
           // Special case: We have optimistic messages but they're not in displayChatHistory yet
           <>
-            {Array.from(messageMap.values())
-              .filter(m => m.is_optimistic && !editedMessageIds.has(m.id)) // Skip edited optimistic messages
-              .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
-              .map((chat, index, arr) => (
-                <MemoizedChatMessage
-                  chat={chat}
-                  lastMessage={arr.length - 1 === index}
-                  key={chat.id}
-                  updateChat={updateChatMemoized}
-                  closeChat={closeChat}
-                />
-              ))}
+            {optimisticMessagesToRender.map((chat, index, arr) => (
+              <MemoizedChatMessage
+                chat={chat}
+                lastMessage={arr.length - 1 === index}
+                key={generateMessageKey(chat)}
+                updateChat={updateChatMemoized}
+                closeChat={closeChat}
+                flowIcon={flowIcon}
+              />
+            ))}
           </>
         ) : chatHistory &&
           (isBuilding || stableDisplayHistory?.length > 0 ? (
@@ -937,16 +1039,21 @@ export default function ChatView({
                 <MemoizedChatMessage
                   chat={chat}
                   lastMessage={stableDisplayHistory.length - 1 === index}
-                  key={chatMessageKeys[index]}
+                  key={generateMessageKey(chat)}
                   updateChat={updateChatMemoized}
                   closeChat={closeChat}
+                  flowIcon={flowIcon}
                 />
               ))}
             </>
           ) : (
             <div className="flex h-full w-full flex-col items-center justify-center">
               <div className="flex flex-col items-center justify-center gap-4 p-8">
-                {ENABLE_NEW_LOGO ? (
+              <ForwardedIconComponent
+                  name={flowIcon || ""}
+                  className="h-10 w-10 scale-[1.5]"
+              />
+                {/* {ENABLE_NEW_LOGO ? (
                   <LangflowLogo
                     title="Langflow logo"
                     className="h-10 w-10 scale-[1.5]"
@@ -956,17 +1063,17 @@ export default function ChatView({
                     title="Langflow logo"
                     className="h-10 w-10 scale-[1.5]"
                   />
-                )}
+                )} */}
                 <div className="flex flex-col items-center justify-center">
                   <h3 className="mt-2 pb-2 text-2xl font-semibold text-primary">
-                    New chat
+                    {flowName || "AI Agent"}
                   </h3>
                   <p
                     className="text-lg text-muted-foreground"
                     data-testid="new-chat-text"
                   >
                     <TextEffectPerChar>
-                      Test your flow with a chat prompt
+                      Test your agent with a chat prompt
                     </TextEffectPerChar>
                   </p>
                 </div>

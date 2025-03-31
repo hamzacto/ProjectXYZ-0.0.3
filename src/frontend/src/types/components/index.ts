@@ -599,6 +599,7 @@ export type chatMessagePropsType = {
     stream_url?: string,
   ) => void;
   closeChat?: () => void;
+  flowIcon?: string | null;
 };
 
 export type genericModalPropsType = {

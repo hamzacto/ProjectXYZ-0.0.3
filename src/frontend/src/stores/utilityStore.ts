@@ -41,4 +41,8 @@ export const useUtilityStore = create<UtilityStoreType>((set, get) => ({
   setIsUserScrolling: (isScrolling: boolean) => set({ isUserScrolling: isScrolling }),
   isAtBottomOfChat: true,
   setIsAtBottomOfChat: (isAtBottom: boolean) => set({ isAtBottomOfChat: isAtBottom }),
+  
+  // Add property to disable auto-scrolling during feedback interactions
+  disableAutoScroll: false,
+  setDisableAutoScroll: (disabled: boolean) => set({ disableAutoScroll: disabled }),
 }));

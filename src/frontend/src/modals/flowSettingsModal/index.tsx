@@ -2,15 +2,9 @@ import useSaveFlow from "@/hooks/flows/use-save-flow";
 import useAlertStore from "@/stores/alertStore";
 import useFlowStore from "@/stores/flowStore";
 import useFlowsManagerStore from "@/stores/flowsManagerStore";
-import { cloneDeep } from "lodash";
 import { useCallback, useEffect, useRef, useState } from "react";
-import IconComponent, { ForwardedIconComponent } from "../../components/common/genericIconComponent";
-import EditFlowSettings from "../../components/core/editFlowSettingsComponent";
-import { SETTINGS_DIALOG_SUBTITLE } from "../../constants/constants";
-import { FlowSettingsPropsType } from "../../types/components";
+import { ForwardedIconComponent } from "../../components/common/genericIconComponent";
 import { AllNodeType, FlowType } from "../../types/flow";
-import { isEndpointNameValid } from "../../utils/utils";
-import BaseModal from "../baseModal";
 import { useFlowWizardMetadata } from "@/hooks/flows/use-flow-wizard-metadata";
 import { useIntegrationStore } from "@/stores/integrationStore";
 import { SidebarProvider } from "@/components/ui/sidebar";
@@ -21,8 +15,7 @@ import KhownledgeBaseFilesUpload from "../templatesModal/components/GuidedAgentk
 import GuidedAgentSubagents from "../templatesModal/components/GuidedAgentSubagents";
 import GuidedAgentTriggers from "../templatesModal/components/GuidedAgentTriggers";
 import GuidedAgentAIAgentAdvancedSettings from "../templatesModal/components/GuidedAgentAIAgentAdvancedSettings";
-import { Background, Edge, Panel, ReactFlowProvider, SelectionMode, useEdgesState, useNodesState, useReactFlow } from "@xyflow/react";
-import { v4 as uuidv4 } from 'uuid';
+import { Background, Edge, Panel, SelectionMode, useEdgesState, useNodesState, useReactFlow } from "@xyflow/react";
 import { FileCategory, FileItem } from "../templatesModal/components/GuidedAgentkhowledgeBase/types";
 import GuidedAgentModal from "../guidedAgentModal";
 import CreateAIAgentComponent from "../templatesModal/components/CreateGuidedAIAgentComponent";
@@ -75,14 +68,14 @@ export default function FlowSettingsModal({
   useEffect(() => {
     setName(flow?.name ?? "");
     setDescription(flow?.description ?? "");
-    setIcon(flow?.icon ?? "robot");
+    setIcon(flow?.icon ?? "Avatar2");
   }, [flow?.name, flow?.description, flow?.icon, open]);
   const [flowedges, setflowedges] = useEdgesState<Edge<any>>([]);
   // Initialize state with safe values
   const [name, setName] = useState(flowData?.name || "");
   const [description, setDescription] = useState(flowData?.description || "");
   const [endpoint_name, setEndpointName] = useState(flowData?.endpoint_name || "");
-  const [icon, setIcon] = useState(flowData?.icon || "robot");
+  const [icon, setIcon] = useState(flowData?.icon || "Avatar2");
   const [isSaving, setIsSaving] = useState(false);
   const [disableSave, setDisableSave] = useState(true);
   const autoSaving = useFlowsManagerStore((state) => state.autoSaving);
@@ -262,7 +255,7 @@ export default function FlowSettingsModal({
       setName(flowData.name || "");
       setDescription(flowData.description || "");
       setEndpointName(flowData.endpoint_name || "");
-      setIcon(flowData.icon || "robot");
+      setIcon(flowData.icon || "Avatar2");
     }
   }, [flowData]);
 

@@ -1,18 +1,11 @@
-import React, { useState } from 'react';
+import { useState, useEffect } from 'react';
 import BaseModal from "@/modals/baseModal";
 import { Input } from '@/components/ui/input'; // Adjust the path as necessary
 import TextAreaComponent from '@/components/core/parameterRenderComponent/components/textAreaComponent'; // Adjust the path as necessary
 import { IconRobot } from '@tabler/icons-react';
-import { cn, getNumberFromString } from '@/utils/utils';
+import { cn } from '@/utils/utils';
 
 // Import avatar SVGs
-import RobotAvatar from '@/assets/agent-avatars/robot.svg';
-import AssistantAvatar from '@/assets/agent-avatars/assistant.svg';
-import ScientistAvatar from '@/assets/agent-avatars/scientist.svg';
-import ResearcherAvatar from '@/assets/agent-avatars/researcher.svg';
-import TeacherAvatar from '@/assets/agent-avatars/teacher.svg';
-import { ForwardIcon } from 'lucide-react';
-import { Avatar1Icon } from '@/icons/AvatarIcon/AvatarIcon';
 import Avatar2Icon from '@/icons/Avatar2Icon';
 import { ForwardedIconComponent } from '@/components/common/genericIconComponent';
 import { swatchColors } from '@/utils/styleUtils';
@@ -21,7 +14,6 @@ import AvatarBookAuthorIcon from '@/icons/AvatarBookAuthor/AvatarBookAuthor';
 import AvatarDetectiveIcon from '@/icons/AvatarDetectiveIcon/AvatarDetectiveIcon';
 import AvatarAstronautIcon from '@/icons/AvatarAstonaut/AvatarAstronautIcon';
 import AvatarCyberpunckIcon from '@/icons/AvatarCyberpunck/AvatarCyberpunckIcon';
-// import { ForwardedIconComponent } from '@/components/common/genericIconComponent';
 const swatchIndex = 15;
 // Define available avatar options
 const AGENT_AVATARS = [
@@ -36,7 +28,19 @@ const AGENT_AVATARS = [
 
 export default function CreateAIAgentComponent({ name, setName, description, setDescription, icon, setIcon }) {
     const [selectedAvatar, setSelectedAvatar] = useState(icon || AGENT_AVATARS[0].id);
-
+    
+    // Initialize icon if not set and keep selectedAvatar in sync
+    useEffect(() => {
+        if ((!icon && setIcon) || icon === "robot") {
+            // If no icon is provided, set default
+            setIcon(AGENT_AVATARS[0].id);
+            setSelectedAvatar(AGENT_AVATARS[0].id);
+        } else if (icon) {
+            // Keep selectedAvatar in sync with icon prop
+            setSelectedAvatar(icon);
+        }
+    }, [icon, setIcon]);
+    
     const handleAvatarSelect = (avatarId) => {
         setSelectedAvatar(avatarId);
         if (setIcon) {

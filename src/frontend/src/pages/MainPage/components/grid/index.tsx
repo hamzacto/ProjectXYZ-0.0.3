@@ -14,7 +14,7 @@ import FlowSettingsModal from "@/modals/flowSettingsModal";
 import useAlertStore from "@/stores/alertStore";
 import useFlowsManagerStore from "@/stores/flowsManagerStore";
 import { FlowType } from "@/types/flow";
-import { swatchColors } from "@/utils/styleUtils";
+import { swatchAvatar, swatchColors } from "@/utils/styleUtils";
 import { cn, getNumberFromString } from "@/utils/utils";
 import { useState } from "react";
 import { useParams } from "react-router-dom";
@@ -40,7 +40,7 @@ const GridComponent = ({ flowData }: { flowData: FlowType }) => {
 
   const { getIcon } = useGetTemplateStyle(flowData);
 
-  const editFlowLink = `/flow/${flowData.id}${folderId ? `/folder/${folderId}` : ""}`;
+  const editFlowLink = `/chat/${flowData.id}${folderId ? `/folder/${folderId}` : ""}`;
 
   const handleClick = async () => {
     if (!isComponent) {
@@ -77,6 +77,8 @@ const GridComponent = ({ flowData }: { flowData: FlowType }) => {
       : getNumberFromString(flowData.gradient ?? flowData.id)) %
     swatchColors.length;
 
+    const isAvatarIcon = flowData?.icon && flowData.icon.startsWith("Avatar");
+    const colorSwatch = isAvatarIcon ? swatchAvatar : swatchColors;
   return (
     <>
       <Card
@@ -89,11 +91,11 @@ const GridComponent = ({ flowData }: { flowData: FlowType }) => {
         }`}
       >
         <div className="flex w-full items-center gap-4">
-          <div className={cn(`flex rounded-lg p-3`, swatchColors[swatchIndex])}>
+          <div className={cn(`flex rounded-lg p-2`, colorSwatch[swatchIndex])}>
             <ForwardedIconComponent
               name={getIcon()}
               aria-hidden="true"
-              className="h-5 w-5"
+              className="h-10 w-10"
             />
           </div>
           <div className="flex w-full min-w-0 items-center justify-between">

@@ -185,7 +185,7 @@ const router = createBrowserRouter(
                 <Route
                   path="integrations"
                   element={
-                    <GuidedAgentIntegrationsPage/>
+                    <GuidedAgentIntegrationsPage />
                   }
                 />
                 <Route
@@ -219,8 +219,9 @@ const router = createBrowserRouter(
                     </ProtectedAdminRoute>
                   }
                 />
-                {/* <Route path="chat/:id" element={<ChatPage />} /> */}
-                <Route path="chat/:id" element={<PlaygroundPage />} />
+                <Route path="chat/:id/">
+                  <Route path="" element={<PlaygroundPage />} />
+                </Route>
               </Route>
               <Route path="flow/:id/">
                 <Route path="" element={<DashboardWrapperPage />}>

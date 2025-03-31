@@ -23,4 +23,6 @@ export type UtilityStoreType = {
   setIsUserScrolling: (isScrolling: boolean) => void;
   isAtBottomOfChat: boolean;
   setIsAtBottomOfChat: (isAtBottom: boolean) => void;
+  disableAutoScroll: boolean;
+  setDisableAutoScroll: (disabled: boolean) => void;
 };

@@ -2,33 +2,28 @@ import ForwardedIconComponent from "@/components/common/genericIconComponent";
 import { Button } from "@/components/ui/button";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { useCustomNavigate } from "@/customization/hooks/use-custom-navigate";
-import { track } from "@/customization/utils/analytics";
 import useAddFlow from "@/hooks/flows/use-add-flow";
 import { Category } from "@/types/templates/types";
 import { useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { newFlowModalPropsType } from "../../types/components";
-import BaseModal from "../baseModal";
 import TemplateContentComponent from "../templatesModal/components/TemplateContentComponent";
-import { Nav } from "../templatesModal/components/navComponent";
 import GuidedAgentForm from "@/components/core/guidedagentform";
 import useFlowsManagerStore from "@/stores/flowsManagerStore";
 import useSaveFlow from "@/hooks/flows/use-save-flow";
 import CreateAIAgentComponent from "../templatesModal/components/CreateGuidedAIAgentComponent";
 import useAlertStore from "@/stores/alertStore";
-import { AllNodeType, FlowType } from "@/types/flow";
+import { AllNodeType } from "@/types/flow";
 import GuidedAiAgentCoreInstructions from "../templatesModal/components/GuidedAiAgentCoreInstructions";
-import React, { useCallback, useRef } from 'react';
+import { useCallback, useRef } from 'react';
 import {
     Background,
     ReactFlow,
-    ReactFlowProvider,
     useReactFlow,
     useNodesState,
     useEdgesState,
     Edge,
     SelectionMode,
-    Controls,
     MiniMap,
     Panel,
     Viewport
@@ -44,14 +39,13 @@ import { getNodeId } from "@/utils/reactflowUtils";
 import { getNodeRenderType } from "@/utils/utils";
 import KhownledgeBaseFilesUpload from "../templatesModal/components/GuidedAgentkhowledgeBase";
 import { FileCategory, FileItem } from "../templatesModal/components/GuidedAgentkhowledgeBase/types";
-import axios, { AxiosInstance, AxiosResponse } from "axios";
+import axios from "axios";
 import GuidedAgentIntegrations from "../templatesModal/components/GuidedAgentIntegrations";
 import GuidedAgentTriggers from "../templatesModal/components/GuidedAgentTriggers";
 import { useIntegrationStore } from "@/stores/integrationStore";
 import GuidedAgentAIAgentAdvancedSettings from "../templatesModal/components/GuidedAgentAIAgentAdvancedSettings";
 import { GuidedAgentNavComponent } from "../templatesModal/components/GuidedAgentNavComponent";
 import GuidedAgentModal from "../guidedAgentModal";
-import GuidedAiAgentConfigureTemplate from "../templatesModal/components/GuidedAiAgentConfigureTemplate";
 import GuidedAgentSubagents from "../templatesModal/components/GuidedAgentSubagents";
 
 
@@ -67,7 +61,7 @@ export default function GuidedAIAgentTemplatesModal({
     const [name, setName] = useState("");
     const [description, setDescription] = useState("");
     const [prompt, setPrompt] = useState("");
-    const [icon, setIcon] = useState("robot");
+    const [icon, setIcon] = useState("Avatar2");
     const examples = useFlowsManagerStore((state) => state.examples);
     var flow = examples.find((example) => example.name === "Guided Agent");
     const setSuccessData = useAlertStore((state) => state.setSuccessData);
@@ -1715,7 +1709,7 @@ export default function GuidedAIAgentTemplatesModal({
 
             // Navigate to the new flow
             navigate(
-                `/flow/${flowId}${folderId ? `/folder/${folderId}` : ""}`,
+                `/chat/${flowId}${folderId ? `/folder/${folderId}` : ""}`,
             );
         });
 

@@ -27,6 +27,8 @@ import EditMessageField from "./components/edit-message-field";
 import FileCardWrapper from "./components/file-card-wrapper";
 import { EditMessageButton } from "./components/message-options";
 import { convertFiles } from "./helpers/convert-files";
+import { api } from "../../../../../controllers/API/api";
+import { getURL } from "../../../../../controllers/API/helpers/constants";
 
 // Main function wrapped in memo for consistent reference identity
 const ChatMessage = ({
@@ -34,17 +36,19 @@ const ChatMessage = ({
   lastMessage,
   updateChat,
   closeChat,
+  flowIcon,
 }: chatMessagePropsType): JSX.Element => {
   const convert = new Convert({ newline: true });
   const [hidden, setHidden] = useState(true);
   const [streamUrl, setStreamUrl] = useState(chat.stream_url);
   const flow_id = useFlowsManagerStore((state) => state.currentFlowId);
+  const currentFlow = useFlowsManagerStore((state) => state.currentFlow);
   const fitViewNode = useFlowStore((state) => state.fitViewNode);
-  
+
   // Preserve message identity for user messages to prevent flickering
   const initialMessage = useRef(chat.message ? chat.message.toString() : "");
   const isUserMessage = chat.isSend;
-  
+
   // We need to check if message is not undefined because
   // we need to run .toString() on it
   const [chatMessage, setChatMessage] = useState(initialMessage.current);
@@ -56,7 +60,24 @@ const ChatMessage = ({
   const [showError, setShowError] = useState(false);
   const isBuilding = useFlowStore((state) => state.isBuilding);
   const dark = useDarkStore((state) => state.dark);
-
+  
+  // Get the utility store functions to control auto-scrolling
+  const setDisableAutoScroll = useUtilityStore((state) => state.setDisableAutoScroll);
+  
+  // When entering/exiting edit mode, control auto-scrolling
+  useEffect(() => {
+    // Disable auto-scrolling when entering edit mode
+    if (editMessage) {
+      setDisableAutoScroll(true);
+    } else {
+      // Re-enable auto-scrolling after a small delay when exiting edit mode
+      // to ensure UI updates complete first
+      setTimeout(() => {
+        setDisableAutoScroll(false);
+      }, 100);
+    }
+  }, [editMessage, setDisableAutoScroll]);
+  
   // Only update message from props if it's not a user message 
   // (prevents flickering from backend updates to user messages)
   useEffect(() => {
@@ -398,7 +419,7 @@ const ChatMessage = ({
             <div className="absolute inset-0 -bottom-10 z-0"></div>
             <div
               className={cn(
-                "relative flex h-[32px] w-[32px] items-center justify-center overflow-hidden rounded-md text-2xl",
+                "relative flex h-[50px] w-[50px] items-center justify-center overflow-hidden rounded-md text-2xl",
                 "bg-muted"
               )}
               style={
@@ -407,16 +428,20 @@ const ChatMessage = ({
                   : {}
               }
             >
-              <div className="flex h-[18px] w-[18px] items-center justify-center">
+              <div className="flex h-[46px] w-[46px] items-center justify-center p-1">
                 {chat.properties?.icon ? (
                   chat.properties.icon.match(
                     /[\u2600-\u27BF\uD83C-\uDBFF\uDC00-\uDFFF]/,
                   ) ? (
                     <span className="">{chat.properties.icon}</span>
                   ) : (
-                    <ForwardedIconComponent name={chat.properties.icon} />
+                    <ForwardedIconComponent name={flowIcon ?? "Avatar2"} className="w-10 h-10"/>
                   )
+                ) : flowIcon ? (
+                  // Use the flow icon if we fetched it successfully
+                  <ForwardedIconComponent name={flowIcon ?? "Avatar2"} className="w-12 h-12"/>
                 ) : (
+                  // Fallback to robot image if no flow icon is available
                   <img
                     src={Robot}
                     className="absolute bottom-0 left-0 scale-[60%]"
@@ -440,12 +465,14 @@ const ChatMessage = ({
                     "sender_name_" + chat.sender_name?.toLocaleLowerCase()
                   }
                 >
-                  {chat.sender_name}
-                  {chat.properties?.source && (
+                  {currentFlow?.name && (
+                        <span className="ml-1">{currentFlow.name}</span>
+                      )}
+                  {/* {chat.properties?.source && (
                     <div className="text-[13px] font-normal text-muted-foreground">
                       {chat.properties?.source.source}
                     </div>
-                  )}
+                  )} */}
                 </div>
               </div>
               {chat.content_blocks && chat.content_blocks.length > 0 && (
