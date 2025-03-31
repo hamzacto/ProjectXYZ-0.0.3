@@ -343,12 +343,12 @@ export default function ChatView({
                     backend_data: message,
                     // For the first message in a new session, keep it optimistic
                     // For other messages, MAINTAIN the existing is_optimistic flag to prevent flickering
-                    is_optimistic: optMsg.is_optimistic 
+                    is_optimistic: false // Set to false to ensure it's displayed as a backend message
                   });
                   return newMap;
                 });
                 
-                return false; // Skip adding the backend message since we updated the optimistic one
+                return true; // Include the backend message even if we updated the optimistic one
               }
             }
             
@@ -379,7 +379,7 @@ export default function ChatView({
                     backend_text: message.text,
                     backend_data: message,
                     // Maintain the current optimistic flag to prevent UI flickering
-                    is_optimistic: optMsg.is_optimistic
+                    is_optimistic: false // Set to false to ensure it's displayed as a backend message
                   });
                   return newMap;
                 });
@@ -388,8 +388,8 @@ export default function ChatView({
               }
             });
             
-            // If we found and updated a matching optimistic message, don't add the backend version
-            return !foundMatch;
+            // Always include backend messages to ensure they're displayed
+            return true;
           }
           
           // For all other messages (like AI responses), always include them
@@ -413,29 +413,28 @@ export default function ChatView({
         
         // Check if this message has been edited according to our persistent map
         const messageText = message.text;
-        const contentKey = `${message.sender === 'User' ? 'user' : 'ai'}-${messageText}`;
+        // Create a composite key that includes both content and message ID
+        // This ensures we don't confuse edits across different messages with the same content
+        const contentKey = `${message.sender === 'User' ? 'user' : 'ai'}-${message.id}-${messageText}`;
         const persistedEditInfo = editedMessagesMap.get(contentKey);
         
         // Update the enhanced check for edited messages
         let isEdited = message.edit || false;
         let updatedContent = messageText; // Default to original content
         
-        // Check if this message or a similar one was edited in any session
+        // Check if this specific message was edited by checking ID and content
         editedMessagesMap.forEach((editInfo, key) => {
-          // For user messages, check using message content and sender type
+          // For user messages, primarily match by ID
           if (message.sender === 'User' && key.startsWith('user-')) {
-            // For edited user messages, we need to compare the content
-            // The message text will be different after edit, so we need to check by ID
-            if (editInfo.id === message.id || 
-                (editInfo.session === message.session_id && key.includes(messageText))) {
+            // Match specifically by ID to avoid content-based matching confusion
+            if (editInfo.id === message.id) {
               isEdited = true;
               updatedContent = editInfo.content; // Use the edited content
             }
           } 
-          // For AI messages, check by both content and ID
+          // For AI messages, also match by ID
           else if (message.sender === 'Machine' && key.startsWith('ai-')) {
-            if (editInfo.id === message.id || 
-                (editInfo.session === message.session_id && key.includes(messageText))) {
+            if (editInfo.id === message.id) {
               isEdited = true;
               updatedContent = editInfo.content; // Use the edited content
             }
@@ -492,20 +491,49 @@ export default function ChatView({
         isSend: msg.isSend
       }));
       
+      // Track all backend message content for more effective cleanup
+      const backendContentSet = new Set(backendMessages.map(msg => msg.text));
+      
       // Check for duplicate messages in messageMap
       const idsToRemove: string[] = [];
+      
+      // Special case: Track the first message specifically
+      const isFirstMessageInSession = messagesFromMessagesStore.length === 1;
+      const firstMessageContent = isFirstMessageInSession 
+        ? (typeof messagesFromMessagesStore[0].message === 'string' 
+           ? messagesFromMessagesStore[0].message 
+           : JSON.stringify(messagesFromMessagesStore[0].message))
+        : null;
       
       messageMap.forEach((optMsg, optId) => {
         const messageContent = typeof optMsg.message === 'string' 
           ? optMsg.message 
           : JSON.stringify(optMsg.message);
           
+        // For ANY optimistic message that now exists in backend, clean it up immediately
+        if (optMsg.is_optimistic && backendContentSet.has(messageContent)) {
+          console.log("Found optimistic message with backend counterpart, removing:", optId);
+          idsToRemove.push(optId);
+          return;
+        }
+        
+        // Special case handling for first message transition
+        if (isFirstMessageInSession && 
+            firstMessageContent === messageContent && 
+            optMsg.is_optimistic) {
+          // This is the optimistic version of the first message that has now arrived from backend
+          // Mark it for removal immediately to prevent duplicate display
+          console.log("Found first message optimistic counterpart, removing:", optId);
+          idsToRemove.push(optId);
+          return; // Skip the rest of the processing for this message
+        }
+          
         // Find matching backend messages
         const matchingBackendMessage = backendMessages.find(backendMsg => 
           backendMsg.text === messageContent && 
           backendMsg.isSend === optMsg.isSend
         );
-          
+        
         // If this is an optimistic message that now exists in the backend, clean it up
         if (matchingBackendMessage) {
           // For edited messages, check both maps to ensure edit status is maintained
@@ -526,11 +554,9 @@ export default function ChatView({
             });
           }
           
-          // Mark for removal if it's not a current optimistic message (has is_optimistic=false)
-          if (!optMsg.is_optimistic || optMsg.edit) {
-            console.log("Found duplicate message to remove:", optId);
-            idsToRemove.push(optId);
-          }
+          // Mark for removal regardless of optimistic status - backend messages take precedence
+          console.log("Found duplicate message to remove:", optId);
+          idsToRemove.push(optId);
         }
       });
       
@@ -560,13 +586,22 @@ export default function ChatView({
     
     // For a new session, always prioritize adding optimistic messages
     const isNewSession = messagesFromMessagesStore.length === 0;
+    const isTransitioningSession = messagesFromMessagesStore.length === 1;
     
     // Keep track of which optimistic messages we've already added
     const addedOptimisticIds = new Set<string>();
     
+    // Special handling for known message IDs that are already in backend
+    const backendMessageIds = new Set(messagesFromMessagesStore.map(msg => msg.id));
+    
     // Add optimistic messages that don't have a matching content in backend messages
     messageMap.forEach((message) => {
       const messageContent = typeof message.message === 'string' ? message.message : JSON.stringify(message.message);
+      
+      // Skip messages that already exist in backend
+      if (message.backend_message_id && backendMessageIds.has(message.backend_message_id)) {
+        return;
+      }
       
       // For new sessions, always add the optimistic message, but avoid duplicates
       if (isNewSession) {
@@ -581,7 +616,18 @@ export default function ChatView({
           addedOptimisticIds.add(message.id);
         }
       }
-      // For existing sessions, only add if not already present
+      // For transitioning sessions (exactly one message in backend), be more careful
+      else if (isTransitioningSession) {
+        // For transitioning sessions, avoid adding the first message as optimistic if it exists in backend
+        const isFirstMessageInBackend = messagesFromMessagesStore.some(msg => 
+          (typeof msg.message === 'string' ? msg.message : JSON.stringify(msg.message)) === messageContent
+        );
+        
+        if (!isFirstMessageInBackend && !existingMessageContents.has(messageContent)) {
+          persistedHistory.push(message);
+        }
+      }
+      // For established sessions, only add if not already present
       else if (!existingMessageContents.has(messageContent)) {
         persistedHistory.push(message);
       }
@@ -676,17 +722,63 @@ export default function ChatView({
 
   // Step 5: Optimize the main deduplication logic with proper dependencies
   const displayChatHistory = useMemo(() => {
+    // Track when this runs for debugging
+    console.log("Recalculating displayChatHistory");
+    
     // Process messages to maintain conversation turns and optimize display
     const result: ChatMessageType[] = [];
     
     // To track optimistic user messages that need backend data
     const pendingOptimisticMessages = new Map<string, number>();
     
+    // Track message content to avoid duplicates across all conversation phases
+    const addedMessageContents = new Map<string, string>(); // Map content to message ID
+    
+    // First, get all optimistic message contents that should be skipped from backend
+    // These are messages that exist both as optimistic and in backend
+    const optimisticContentToSkip = new Set<string>();
+    const backendContentSet = new Set<string>();
+    
+    // First collect all backend message contents
+    sortedMessages.forEach(msg => {
+      if (!msg.is_optimistic) {
+        backendContentSet.add(getMessageContent(msg.message));
+      }
+    });
+    
+    // Then identify which optimistic messages have backend counterparts
+    messageMap.forEach(msg => {
+      if (msg.is_optimistic) {
+        const content = getMessageContent(msg.message);
+        if (backendContentSet.has(content)) {
+          optimisticContentToSkip.add(content);
+        }
+      }
+    });
+    
     // Process chronologically to preserve conversation flow
     for (let i = 0; i < sortedMessages.length; i++) {
       const msg = sortedMessages[i];
       const isUserMessage = msg.isSend;
       const messageContent = getMessageContent(msg.message);
+      
+      // Check for duplicates - but allow duplicate messages from backend with different IDs
+      // We now track message ID with content to allow repeated content with new IDs
+      if (addedMessageContents.has(messageContent) && addedMessageContents.get(messageContent) === msg.id) {
+        // Skip if we've already added this exact message (same ID and content)
+        continue;
+      }
+      
+      // Skip backend messages that match current optimistic messages
+      // This prevents briefly showing both optimistic and backend version of the same message
+      if (!msg.is_optimistic && optimisticContentToSkip.has(messageContent)) {
+        continue;
+      }
+      
+      // Skip optimistic messages that already have backend counterparts
+      if (msg.is_optimistic && backendContentSet.has(messageContent)) {
+        continue;
+      }
       
       // Try to find a recent optimistic version of this message to update
       if (!msg.is_optimistic && isUserMessage && pendingOptimisticMessages.has(messageContent)) {
@@ -703,7 +795,7 @@ export default function ChatView({
         continue;
       }
       
-      // Check if this is a duplicate of the last user message with no AI response in between
+      // Only check for duplicate user messages with no AI response between
       let isDuplicate = false;
       if (isUserMessage && result.length > 0) {
         // Find the last user message in the result
@@ -726,11 +818,13 @@ export default function ChatView({
             const hasAiMessageBetween = result.slice(lastUserMsgIndex + 1).some(m => !m.isSend);
             
             // If there are no AI messages between and neither has been edited, consider it duplicate
+            // BUT - if this is a backend message (not optimistic) with a different ID, allow it through
             if (!hasAiMessageBetween && 
                 !msg.edit && 
                 !lastUserMsg.edit && 
                 !editedMessageIdsRef.current.has(msg.id) && 
-                !editedMessageIdsRef.current.has(lastUserMsg.id)) {
+                !editedMessageIdsRef.current.has(lastUserMsg.id) &&
+                (msg.is_optimistic || msg.id === lastUserMsg.id)) {
               isDuplicate = true;
             }
           }
@@ -740,6 +834,7 @@ export default function ChatView({
       // If it's not a duplicate, add it to the result
       if (!isDuplicate) {
         result.push(msg);
+        addedMessageContents.set(messageContent, msg.id);
         
         // If it's an optimistic user message, track it for potential backend updates
         if (msg.is_optimistic && isUserMessage) {
@@ -749,7 +844,12 @@ export default function ChatView({
     }
     
     return result;
-  }, [sortedMessages, getMessageContent]); // Only recalculate when sorted messages change or message content getter changes
+  }, [sortedMessages, getMessageContent, messageMap]); // Added messageMap as dependency to update when optimistic messages change
+
+  // Create a synchronization key that changes whenever messages are updated
+  const chatSyncKey = useMemo(() => {
+    return `${messages.length}-${messageMap.size}-${visibleSession || 'new'}`;
+  }, [messages.length, messageMap.size, visibleSession]);
 
   // Use useTransition to update the display history smoothly
   useEffect(() => {
@@ -758,7 +858,7 @@ export default function ChatView({
         setStableDisplayHistory(displayChatHistory);
       });
     }
-  }, [displayChatHistory]);
+  }, [displayChatHistory, chatSyncKey]); // Added chatSyncKey as dependency
 
   // Extract key generation function for better memoization
   const generateMessageKey = useCallback((chat: ChatMessageType) => {
@@ -784,17 +884,66 @@ export default function ChatView({
   const optimisticMessagesToRender = useMemo(() => {
     if (messageMap.size === 0) return [];
     
+    // Calculate the session phase to help with determining which optimistic messages to show
+    const isNewSession = !chatHistory || chatHistory.length === 0;
+    const isTransitionSession = chatHistory && chatHistory.length === 1;
+    
+    // Get all existing message contents from chat history to avoid duplicates
+    const existingMessageContents = new Set<string>();
+    if (chatHistory && chatHistory.length > 0) {
+      chatHistory.forEach(msg => {
+        const content = getMessageContent(msg.message);
+        existingMessageContents.add(content);
+      });
+    }
+    
+    // For any session where we're sending a message,
+    // filter out optimistic messages that match content in the existing chat history
     return Array.from(messageMap.values())
-      .filter(m => m.is_optimistic && !editedMessageIdsRef.current.has(m.id))
+      .filter(m => {
+        // Always skip edited messages
+        if (editedMessageIdsRef.current.has(m.id)) return false;
+        
+        // Must be a current optimistic message
+        if (!m.is_optimistic) return false;
+        
+        // Skip messages that already exist in chat history
+        if (chatHistory && chatHistory.length > 0) {
+          const msgContent = getMessageContent(m.message);
+          if (existingMessageContents.has(msgContent)) {
+            return false;
+          }
+        }
+        
+        return true;
+      })
       .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-  }, [messageMap, /* editedMessageIdsRef is intentionally omitted as we use the ref inside */]);
+  }, [messageMap, chatHistory, getMessageContent]);
 
   // Check if we have optimistic messages that should be displayed separate from history
   const hasOptimisticMessagesToDisplay = useMemo(() => {
-    return messageMap.size > 0 && 
-           Array.from(messageMap.values()).some(m => m.is_optimistic) && 
-           (!displayChatHistory || displayChatHistory.length === 0);
-  }, [messageMap, displayChatHistory?.length]);
+    // Get all existing message contents from chat history
+    const existingMessageContents = new Set<string>();
+    if (chatHistory && chatHistory.length > 0) {
+      chatHistory.forEach(msg => {
+        const content = getMessageContent(msg.message);
+        existingMessageContents.add(content);
+      });
+    }
+    
+    // Count optimistic messages that don't already exist in chat history
+    const relevantOptimisticMsgCount = Array.from(messageMap.values())
+      .filter(m => {
+        if (!m.is_optimistic) return false;
+        if (editedMessageIdsRef.current.has(m.id)) return false;
+        
+        const msgContent = getMessageContent(m.message);
+        return !existingMessageContents.has(msgContent);
+      })
+      .length;
+      
+    return relevantOptimisticMsgCount > 0;
+  }, [messageMap, chatHistory, getMessageContent]);
 
   // Memoize the updateChat function to maintain reference stability
   const updateChatMemoized = useCallback((
@@ -823,8 +972,8 @@ export default function ChatView({
     
     // Add to editedMessagesMap to persist edit status across session switches
     if (chat.id) {
-      // Create a content key to help with tracking edits
-      const contentKey = `${chat.isSend ? 'user' : 'ai'}-${message}`;
+      // Create a content key to help with tracking edits - now includes ID
+      const contentKey = `${chat.isSend ? 'user' : 'ai'}-${chat.id}-${message}`;
       
       // Get the original content with proper type handling
       const originalContent = typeof chat.backend_text === 'string' 
@@ -931,29 +1080,24 @@ export default function ChatView({
         
         // Loop through messageMap and check if any messages have an edit state
         newMap.forEach((msg, id) => {
-          // Create a content key to check editedMessagesMap
+          // Create a content key to check editedMessagesMap - now includes ID
           const messageContent = typeof msg.message === 'string' 
             ? msg.message 
             : JSON.stringify(msg.message);
-          const contentKey = `${msg.isSend ? 'user' : 'ai'}-${messageContent}`;
           
-          // Check if this message or one with this content was edited
+          // Match only by ID for more reliable matching
+          
+          // Check if this message was edited by looking for its ID
           editedMessagesMap.forEach((editInfo, editKey) => {
-            // For user messages, check if this is their ID or content
-            if (msg.isSend && editKey.startsWith('user-')) {
-              if (editInfo.id === msg.id || 
-                  (editInfo.session === msg.session && editKey.includes(messageContent))) {
-                // Apply the edit flag and update content
-                newMap.set(id, {...msg, edit: true, message: editInfo.content});
-              }
+            // For user messages, only match by ID
+            if (msg.isSend && editInfo.id === msg.id) {
+              // Apply the edit flag and update content
+              newMap.set(id, {...msg, edit: true, message: editInfo.content});
             }
-            // For AI messages, similar logic
-            else if (!msg.isSend && editKey.startsWith('ai-')) {
-              if (editInfo.id === msg.id || 
-                  (editInfo.session === msg.session && editKey.includes(messageContent))) {
-                // Apply the edit flag and update content
-                newMap.set(id, {...msg, edit: true, message: editInfo.content});
-              }
+            // For AI messages, only match by ID
+            else if (!msg.isSend && editInfo.id === msg.id) {
+              // Apply the edit flag and update content
+              newMap.set(id, {...msg, edit: true, message: editInfo.content});
             }
           });
         });
@@ -1073,7 +1217,7 @@ export default function ChatView({
                     data-testid="new-chat-text"
                   >
                     <TextEffectPerChar>
-                      Test your agent with a chat prompt
+                      Hello, how can I help you today?
                     </TextEffectPerChar>
                   </p>
                 </div>
@@ -1175,7 +1319,8 @@ export default function ChatView({
             // Clear input immediately to improve responsiveness
             setChatValueStore("");
             
-            // Send actual message to backend with client messageId
+            // ALWAYS send the message to the backend, even if it's a duplicate
+            // This allows the agent to process the same message multiple times if the user wants
             sendMessage({ 
               repeat, 
               files: files || [], 
