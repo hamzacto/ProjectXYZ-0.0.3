@@ -1657,7 +1657,17 @@ export default function GuidedAIAgentTemplatesModal({
                 categories: fileCategories.map(cat => ({
                     id: cat.id,
                     name: cat.name,
-                    files: cat.files
+                    files: cat.files.map(file => ({
+                        id: file.id,
+                        name: file.name,
+                        size: file.size,
+                        type: file.type,
+                        category: file.category,
+                        file_path: file.file_path,
+                        status: file.status,
+                        progress: file.progress,
+                        error: file.error
+                    }))
                 }))
             },
             triggers: selectedTriggers,
