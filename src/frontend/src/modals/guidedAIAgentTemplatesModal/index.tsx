@@ -47,7 +47,7 @@ import GuidedAgentAIAgentAdvancedSettings from "../templatesModal/components/Gui
 import { GuidedAgentNavComponent } from "../templatesModal/components/GuidedAgentNavComponent";
 import GuidedAgentModal from "../guidedAgentModal";
 import GuidedAgentSubagents from "../templatesModal/components/GuidedAgentSubagents";
-
+import { insertFilesIntoDatabase } from "../flowSettingsModal/fileUtils";
 
 export default function GuidedAIAgentTemplatesModal({
     open,
@@ -87,6 +87,8 @@ export default function GuidedAIAgentTemplatesModal({
         maxTokens: 0,
         handleParseErrors: true
     });
+    const setNoticeData = useAlertStore((state) => state.setNoticeData);
+    const setErrorData = useAlertStore((state) => state.setErrorData);
 
     // const [templateVariables, setTemplateVariables] = useState<Array<{
     //     id: string;
@@ -996,14 +998,14 @@ export default function GuidedAIAgentTemplatesModal({
         }
     }
 
-    async function insertFilesIntoDatabase(fileCategories: any[], collectionName: string) {
-        const files: any[] = [];
-        fileCategories.forEach((cat) => {
-            files.push(...cat.files);
-        });
-        // Process files with a concurrency limit of 4 (adjust as needed)
-        await processInBatches(files, (file) => insertFile(file, collectionName), 4);
-    }
+    // async function insertFilesIntoDatabase(fileCategories: any[], collectionName: string) {
+    //     const files: any[] = [];
+    //     fileCategories.forEach((cat) => {
+    //         files.push(...cat.files);
+    //     });
+    //     // Process files with a concurrency limit of 4 (adjust as needed)
+    //     await processInBatches(files, (file) => insertFile(file, collectionName), 4);
+    // }
 
     // Helper functions for UI updates
     function updateFileProgress(fileId: string, progress: number) {
@@ -1619,7 +1621,7 @@ export default function GuidedAIAgentTemplatesModal({
         if (fileCategories[0].files.length > 0) {
             try {
                 createCollectionInMilvus(collectionName);
-                insertFilesIntoDatabase(fileCategories, collectionName);
+                insertFilesIntoDatabase(fileCategories, collectionName, setNoticeData, setErrorData, setSuccessData);
             } catch (error) {
                 console.error('Error during the file ingestion process:', error);
             }

@@ -60,6 +60,7 @@ export default function FlowSettingsModal({
   const saveFlow = useSaveFlow();
   const currentFlow = useFlowStore((state) => state.currentFlow);
   const setCurrentFlowInManager = useFlowsManagerStore((state) => state.setCurrentFlow);
+  const setNoticeData = useAlertStore((state) => state.setNoticeData);
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
   const setErrorData = useAlertStore((state) => state.setErrorData);
   const flows = useFlowsManagerStore((state) => state.flows);
@@ -914,7 +915,6 @@ export default function FlowSettingsModal({
 
     return updatedFlow;
   };
-
   const handleUpdate = async () => {
     setIsSaving(true);
     try {
@@ -961,7 +961,7 @@ export default function FlowSettingsModal({
               // Delete files that are no longer present
               for (const file of filesToDelete) {
                 try {
-                  await deleteFileFromDatabase(file.id, collectionName);
+                  await deleteFileFromDatabase(file.id, collectionName, setErrorData);
                 } catch (error) {
                   console.error(`Error deleting file ${file.id}:`, error);
                 }
@@ -975,7 +975,7 @@ export default function FlowSettingsModal({
                     name: 'temp',
                     files: [file]
                   };
-                  await insertFilesIntoDatabase([tempCategory], collectionName);
+                  await insertFilesIntoDatabase([tempCategory], collectionName, setNoticeData, setErrorData, setSuccessData);
                 } catch (error) {
                   console.error(`Error uploading file ${file.id}:`, error);
                 }

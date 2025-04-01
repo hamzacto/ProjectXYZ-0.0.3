@@ -7,8 +7,15 @@ const axiosInstance = axios.create({
       'Content-Type': 'application/json',
     },
     timeout: 120000,
-  });
-export async function insertFile(file: any, collectionName: string) {
+});
+
+export async function insertFile(
+  file: any, 
+  collectionName: string,
+  setSuccessData?: (data: { title: string }) => void,
+  setErrorData?: (data: { title: string; list: string[] }) => void,
+  setNoticeData?: (data: { title: string; link?: string }) => void
+) {
     let base64Content: string | undefined;
 
     if (file.content instanceof ArrayBuffer) {
@@ -65,14 +72,29 @@ export async function insertFile(file: any, collectionName: string) {
                 if (status.total_chunks > 0) {
                     const progress = (status.processed_chunks / status.total_chunks) * 100;
                     updateFileProgress(file.id, progress);
+                    if (setNoticeData) {
+                        setNoticeData({
+                            title: `Processing ${file.name} ${Math.round(progress)}%`});
+                    }
                 }
                 if (status.status === 'completed') {
                     console.log(`File ${file.name} processing completed`);
                     updateFileStatus(file.id, 'completed');
+                    if (setSuccessData) {
+                        setSuccessData({
+                            title: `${file.name} processed successfully`,
+                        });
+                    }
                     return;
                 } else if (status.status === 'failed') {
                     console.error(`File ${file.name} processing failed:`, status.error);
                     updateFileStatus(file.id, 'failed', status.error);
+                    if (setErrorData) {
+                        setErrorData({
+                            title: `Error processing ${file.name}`,
+                            list: [status.error || 'Unknown error occurred']
+                        });
+                    }
                     return;
                 }
                 // Poll again after a delay
@@ -80,13 +102,26 @@ export async function insertFile(file: any, collectionName: string) {
             } catch (error: any) {
                 console.error(`Error checking status for ${file.name}:`, error);
                 updateFileStatus(file.id, 'failed', error.message);
+                if (setErrorData) {
+                    setErrorData({
+                        title: `Error processing ${file.name}`,
+                        list: [error.message]
+                    });
+                }
             }
         };
         pollStatus();
-    } catch (error) {
+    } catch (error: any) {
         console.error(`Error inserting file ${file.name}:`, error);
+        if (setErrorData) {
+            setErrorData({
+                title: `Error uploading ${file.name}`,
+                list: [error.message]
+            });
+        }
     }
 }
+
 // Helper functions for UI updates
 function updateFileProgress(fileId: string, progress: number) {
     const progressElement = document.querySelector(`[data-file-id="${fileId}"] .progress`) as HTMLElement;
@@ -105,14 +140,37 @@ function updateFileStatus(fileId: string, status: 'completed' | 'failed', error?
     }
 }
 
-export async function insertFilesIntoDatabase(fileCategories: FileCategory[], collectionName: string) {
+export const insertFilesIntoDatabase = async (
+  categories: FileCategory[],
+  collectionName: string,
+  setNoticeData?: (data: { title: string; link?: string }) => void,
+  setErrorData?: (data: { title: string; list: string[] }) => void,
+  setSuccessData?: (data: { title: string }) => void
+) => {
+  try {
+    if (setNoticeData) {
+      setNoticeData({
+        title: "Your files are being processed in the background. You can continue using your AI Agent, but please note that responses may not include information from files still being processed. Check back in a few minutes for optimal results.",
+        link: "Processing..."
+      });
+    }
+    
     const files: FileItem[] = [];
-    fileCategories.forEach((cat) => {
+    categories.forEach((cat) => {
         files.push(...cat.files);
     });
     // Process files with a concurrency limit of 4 (adjust as needed)
-    await processInBatches(files, (file) => insertFile(file, collectionName), 4);
-}
+    await processInBatches(files, (file) => insertFile(file, collectionName, setSuccessData, setErrorData, setNoticeData), 4);
+  } catch (error) {
+    if (setErrorData) {
+      setErrorData({
+        title: "Error uploading files",
+        list: [(error as Error).message]
+      });
+    }
+    throw error;
+  }
+};
 
 // A simple concurrency limiter
 export async function processInBatches<T>(items: T[], handler: (item: T) => Promise<void>, concurrency: number = 4) {
@@ -133,15 +191,25 @@ export async function processInBatches<T>(items: T[], handler: (item: T) => Prom
     await Promise.all(executing);
 }
 
-export async function deleteFileFromDatabase(fileId: string, collectionName: string) {
-    try {
-        // Call the backend API to delete the file from Milvus
-        const { data } = await axiosInstance.delete(`/milvus/files/${collectionName}/${fileId}`);
-        console.log(`File ${fileId} deleted from collection ${collectionName}:`, data);
-        return true;
-    } catch (error) {
-        console.error(`Error deleting file ${fileId} from collection ${collectionName}:`, error);
-        return false;
+export const deleteFileFromDatabase = async (
+  fileId: string,
+  collectionName: string,
+  setErrorData?: (data: { title: string; list: string[] }) => void
+) => {
+  try {
+    // Call the backend API to delete the file from Milvus
+    const { data } = await axiosInstance.delete(`/milvus/files/${collectionName}/${fileId}`);
+    console.log(`File ${fileId} deleted from collection ${collectionName}:`, data);
+    return true;
+  } catch (error) {
+    if (setErrorData) {
+      setErrorData({
+        title: "Error deleting file",
+        list: [(error as Error).message]
+      });
     }
-}
+    console.error(`Error deleting file ${fileId} from collection ${collectionName}:`, error);
+    return false;
+  }
+};
 
