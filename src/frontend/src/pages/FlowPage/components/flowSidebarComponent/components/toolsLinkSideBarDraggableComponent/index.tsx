@@ -43,7 +43,8 @@ export const ToolsLinkSidebarDraggableComponent = forwardRef(
             onAddTool, // Add this prop here
             isAdded,
             addTool,
-            description
+            description,
+            isConnected = true
         }: {
             sectionName: string;
             apiClass: APIClassType;
@@ -60,8 +61,9 @@ export const ToolsLinkSidebarDraggableComponent = forwardRef(
             disabled?: boolean;
             disabledTooltip?: string;
             onAddTool?: (apiClass: APIClassType) => void; // Define type for onAddTool
-            isAdded,  // New prop
-            addTool
+            isAdded: boolean;  // New prop
+            addTool: any;
+            isConnected?: boolean; // New prop to indicate if required service is connected
         },
         ref,
     ) => {
@@ -76,6 +78,22 @@ export const ToolsLinkSidebarDraggableComponent = forwardRef(
         const [cursorPos, setCursorPos] = useState({ x: 0, y: 0 });
         const popoverRef = useRef<HTMLDivElement>(null);
 
+        // Determine which service is needed based on the tool name
+        const getServiceName = () => {
+            const normalizedName = display_name.toLowerCase();
+            if (normalizedName.includes('hubspot')) return 'HubSpot';
+            if (normalizedName.includes('slack')) return 'Slack';
+            if (normalizedName.includes('gmail') || normalizedName.includes('google')) return 'Gmail';
+            return null;
+        };
+
+        const serviceName = getServiceName();
+        
+        const getWarningTooltip = () => {
+            if (isConnected || !serviceName) return null;
+            return `This tool requires ${serviceName} integration. Please connect your ${serviceName} account in integrations settings.`;
+        };
+
         const handlePointerDown = (e) => {
             if (!open) {
                 const rect = popoverRef.current?.getBoundingClientRect() ?? {
@@ -89,8 +107,6 @@ export const ToolsLinkSidebarDraggableComponent = forwardRef(
         const addComponentHandler = () => {
             addTool(apiClass);  // Add tool to the list
         };
-
-
 
         function handleSelectChange(value: string) {
             switch (value) {
@@ -194,6 +210,19 @@ export const ToolsLinkSidebarDraggableComponent = forwardRef(
                                             >
                                                 Legacy
                                             </Badge>
+                                        )}
+                                        {!isConnected && serviceName && (
+                                            <ShadTooltip 
+                                                content={getWarningTooltip()} 
+                                                styleClasses="z-50"
+                                            >
+                                                <div className="flex items-center">
+                                                    <ForwardedIconComponent
+                                                        name="AlertTriangle"
+                                                        className="h-4 w-4 shrink-0 text-yellow-500"
+                                                    />
+                                                </div>
+                                            </ShadTooltip>
                                         )}
                                     </div>
                                     <span className="truncate text-xs text-muted-foreground">

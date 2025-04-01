@@ -12,6 +12,7 @@ interface ToolsLinkSidebarItemsListProps {
   onAddTool: (tool: any) => void;
   addedTools: any[]; // Adjust type based on the shape of your tool objects
   addTool: (tool: any) => void;
+  isServiceConnected?: (serviceName: string) => boolean;
 }
 
 const ToolsLinkSidebarItemsList: React.FC<ToolsLinkSidebarItemsListProps> = ({
@@ -23,6 +24,7 @@ const ToolsLinkSidebarItemsList: React.FC<ToolsLinkSidebarItemsListProps> = ({
     onAddTool,
     addedTools,
     addTool,
+    isServiceConnected,
 }) => {
     const tools_to_hide = ['Astra DB CQL', 
         'Astra DB Tool',
@@ -60,6 +62,11 @@ const ToolsLinkSidebarItemsList: React.FC<ToolsLinkSidebarItemsListProps> = ({
         return tools_to_hide.includes(tool.display_name);
     };
 
+    // Check if service is connected, default to true if the prop is not provided
+    const checkServiceConnection = (toolName: string) => {
+        return isServiceConnected ? isServiceConnected(toolName) : true;
+    };
+
     return (
         <div className="flex flex-col gap-1 py-2">
             {Object.keys(dataFilter[item.name])
@@ -74,7 +81,8 @@ const ToolsLinkSidebarItemsList: React.FC<ToolsLinkSidebarItemsListProps> = ({
                 .map((SBItemName, idx) => {
                     const currentItem = dataFilter[item.name][SBItemName];
                     const isAdded = isToolAdded(currentItem);
-
+                    
+                    // Don't pass isConnected to the available tools list
                     return (
                         <ToolsLinkSidebarDraggableComponent
                             key={SBItemName}
