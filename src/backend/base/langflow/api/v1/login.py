@@ -16,15 +16,18 @@ from langflow.services.auth.utils import (
 )
 from langflow.services.database.models.user.crud import get_user_by_id
 from langflow.services.deps import get_settings_service, get_variable_service
+from langflow.services.limiter.service import login_limiter
 
 router = APIRouter(tags=["Login"])
 
 
 @router.post("/login", response_model=Token)
 async def login_to_get_access_token(
+    request: Request,
     response: Response,
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
     db: DbSession,
+    _: None = Depends(login_limiter),
 ):
     auth_settings = get_settings_service().auth_settings
     try:
@@ -72,7 +75,7 @@ async def login_to_get_access_token(
         return tokens
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Incorrect username or password",
+        detail="Incorrect username/email or password",
         headers={"WWW-Authenticate": "Bearer"},
     )
 
