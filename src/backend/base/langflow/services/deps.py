@@ -247,3 +247,8 @@ def get_queue_service() -> JobQueueService:
     from langflow.services.job_queue.factory import JobQueueServiceFactory
 
     return get_service(ServiceType.JOB_QUEUE_SERVICE, JobQueueServiceFactory())
+
+
+def get_email_service():
+    from langflow.services.email.service import get_email_service as get_es
+    return get_es()

@@ -36,6 +36,9 @@ import ShortcutsPage from "./pages/SettingsPage/pages/ShortcutsPage";
 import StoreApiKeyPage from "./pages/SettingsPage/pages/StoreApiKeyPage";
 import StorePage from "./pages/StorePage";
 import ViewPage from "./pages/ViewPage";
+import VerifyEmailPage from "./pages/VerifyEmailPage";
+import ResetPasswordPage from "./pages/ResetPasswordPage";
+import RequestPasswordResetPage from "./pages/RequestPasswordResetPage";
 import GuidedAgentIntegrations from "./modals/templatesModal/components/GuidedAgentIntegrations";
 import GuidedAgentIntegrationsPage from "./pages/GuidedAgentIntegrationsPage";
 import GmailIntegrationsDetailPage from "./pages/GmailIntegrationsDetailPage/index";
@@ -252,12 +255,24 @@ const router = createBrowserRouter(
             }
           />
           <Route
+            path="verify-email"
+            element={<VerifyEmailPage />}
+          />
+          <Route
+            path="reset-password"
+            element={<ResetPasswordPage />}
+          />
+          <Route
             path="login/admin"
             element={
               <ProtectedLoginRoute>
                 <LoginAdminPage />
               </ProtectedLoginRoute>
             }
+          />
+          <Route
+            path="forgot-password"
+            element={<RequestPasswordResetPage />}
           />
         </Route>
       </Route>

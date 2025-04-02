@@ -31,6 +31,9 @@ class AuthSettings(BaseSettings):
     # > The application does not request login and logs in automatically as a super user.
     AUTO_LOGIN: bool = True
     NEW_USER_IS_ACTIVE: bool = False
+    # If DISABLE_EMAIL_VERIFICATION = True, then email verification will be bypassed
+    # and admin approval won't be required for new users
+    DISABLE_EMAIL_VERIFICATION: bool = False
     SUPERUSER: str = DEFAULT_SUPERUSER
     SUPERUSER_PASSWORD: str = DEFAULT_SUPERUSER_PASSWORD
 

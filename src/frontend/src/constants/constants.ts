@@ -592,6 +592,7 @@ export const skipNodeUpdate = [
 ];
 
 export const CONTROL_INPUT_STATE = {
+  email: "",
   password: "",
   cnfPassword: "",
   username: "",
@@ -626,7 +627,7 @@ export const TIMEOUT_ERROR_MESSAGE =
   "Please wait a few moments while the server processes your request.";
 export const TIMEOUT_ERROR_DESCRIPION = "Server is busy.";
 
-export const SIGN_UP_SUCCESS = "Account created! Await admin activation. ";
+export const SIGN_UP_SUCCESS = "Account created! Please check your email for verification instructions.";
 
 export const API_PAGE_PARAGRAPH =
   "Your secret Langflow API keys are listed below. Do not share your API key with others, or expose it in the browser or other client-side code.";

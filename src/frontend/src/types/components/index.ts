@@ -330,6 +330,7 @@ export interface languageMap {
 }
 
 export type signUpInputStateType = {
+  email: string;
   password: string;
   cnfPassword: string;
   username: string;
@@ -410,6 +411,7 @@ export type patchUserInputStateType = {
 
 export type UserInputType = {
   username: string;
+  email: string;
   password: string;
   is_active?: boolean;
   is_superuser?: boolean;

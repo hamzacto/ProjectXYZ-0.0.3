@@ -5,6 +5,7 @@ from fastapi import HTTPException, status
 from loguru import logger
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.attributes import flag_modified
+from sqlalchemy import func
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -14,6 +15,12 @@ from langflow.services.database.models.integration_token.model import Integratio
 
 async def get_user_by_username(db: AsyncSession, username: str) -> User | None:
     stmt = select(User).where(User.username == username)
+    return (await db.exec(stmt)).first()
+
+
+async def get_user_by_email(db: AsyncSession, email: str) -> User | None:
+    # Use case-insensitive search for email
+    stmt = select(User).where(func.lower(User.email) == func.lower(email))
     return (await db.exec(stmt)).first()
 
 

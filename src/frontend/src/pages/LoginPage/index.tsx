@@ -81,24 +81,24 @@ export default function LoginPage(): JSX.Element {
           <div className="mb-3 w-full">
             <Form.Field name="username">
               <Form.Label className="data-[invalid]:label-invalid">
-                Username <span className="font-medium text-destructive">*</span>
+                Username or Email <span className="font-medium text-destructive">*</span>
               </Form.Label>
 
               <Form.Control asChild>
                 <Input
-                  type="username"
+                  type="text"
                   onChange={({ target: { value } }) => {
                     handleInput({ target: { name: "username", value } });
                   }}
                   value={username}
                   className="w-full"
                   required
-                  placeholder="Username"
+                  placeholder="Username or Email"
                 />
               </Form.Control>
 
               <Form.Message match="valueMissing" className="field-invalid">
-                Please enter your username
+                Please enter your username or email
               </Form.Message>
             </Form.Field>
           </div>
@@ -125,9 +125,14 @@ export default function LoginPage(): JSX.Element {
               </Form.Message>
             </Form.Field>
           </div>
+          <div className="mb-2 w-full text-left">
+            <a href="/forgot-password.html" className="text-xs text-primary hover:underline">
+              Forgot password?
+            </a>
+          </div>
           <div className="w-full">
             <Form.Submit asChild>
-              <Button className="mr-3 mt-6 w-full" type="submit">
+              <Button className="mr-3 mt-3 w-full" type="submit">
                 Sign in
               </Button>
             </Form.Submit>

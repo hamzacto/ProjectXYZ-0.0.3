@@ -16,10 +16,14 @@ if TYPE_CHECKING:
 class User(SQLModel, table=True):  # type: ignore[call-arg]
     id: UUIDstr = Field(default_factory=uuid4, primary_key=True, unique=True)
     username: str = Field(index=True, unique=True)
+    email: str = Field(index=True, unique=True)
     password: str = Field()
     profile_image: str | None = Field(default=None, nullable=True)
     is_active: bool = Field(default=False)
     is_superuser: bool = Field(default=False)
+    is_verified: bool = Field(default=False)
+    verification_token: str | None = Field(default=None, nullable=True)
+    verification_token_expiry: datetime | None = Field(default=None, nullable=True)
     create_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     last_login_at: datetime | None = Field(default=None, nullable=True)
@@ -46,15 +50,18 @@ class User(SQLModel, table=True):  # type: ignore[call-arg]
 
 class UserCreate(SQLModel):
     username: str = Field()
+    email: str = Field()
     password: str = Field()
 
 
 class UserRead(SQLModel):
     id: UUID = Field(default_factory=uuid4)
     username: str = Field()
+    email: str = Field()
     profile_image: str | None = Field()
     store_api_key: str | None = Field(nullable=True)
     is_active: bool = Field()
+    is_verified: bool = Field()
     is_superuser: bool = Field()
     create_at: datetime = Field()
     updated_at: datetime = Field()
@@ -63,8 +70,10 @@ class UserRead(SQLModel):
 
 class UserUpdate(SQLModel):
     username: str | None = None
+    email: str | None = None
     profile_image: str | None = None
     password: str | None = None
     is_active: bool | None = None
+    is_verified: bool | None = None
     is_superuser: bool | None = None
     last_login_at: datetime | None = None

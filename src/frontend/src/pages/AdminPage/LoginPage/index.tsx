@@ -65,7 +65,7 @@ export default function LoginAdminPage() {
             handleInput({ target: { name: "username", value } });
           }}
           className="bg-background"
-          placeholder="Username"
+          placeholder="Username or Email"
         />
         <Input
           type="password"

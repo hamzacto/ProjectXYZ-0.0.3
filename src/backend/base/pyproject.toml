@@ -19,6 +19,7 @@ maintainers = [
 
 dependencies = [
     "fastapi>=0.115.2,<1.0.0",
+    "fastapi-limiter>=0.1.5,<1.0.0",
     "httpx[http2]>=0.27,<1.0.0",
     "aiofile>=3.9.0,<4.0.0",
     "uvicorn>=0.30.0,<1.0.0",
@@ -81,6 +82,9 @@ dependencies = [
     "mcp>=1.1.2",
     "aiosqlite>=0.20.0",
     "greenlet>=3.1.1",
+    "email-validator>=2.0.0",
+    "jinja2>=3.0.0",
+    "redis>=5.0.0,<6.0.0",
 ]
 
 
@@ -192,6 +196,7 @@ Documentation = "https://docs.langflow.org"
 deploy = [
     "celery>=5.3.1",
     "redis>=4.6.0",
+    "fastapi-limiter>=0.1.5",
     "flower>=1.0.0"
 ]
 local = [

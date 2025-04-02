@@ -34,7 +34,8 @@ from langflow.interface.components import get_and_cache_all_types_dict
 from langflow.interface.utils import setup_llm_caching
 from langflow.logging.logger import configure
 from langflow.middleware import ContentSizeLimitMiddleware
-from langflow.services.deps import get_queue_service, get_settings_service, get_telemetry_service
+from langflow.services.deps import get_queue_service, get_settings_service, get_telemetry_service, get_db_service, get_session
+from langflow.services.email.service import get_email_service
 from langflow.services.utils import initialize_services, teardown_services
 
 if TYPE_CHECKING:
@@ -120,6 +121,11 @@ def get_lifespan(*, fix_migration=False, version=None):
         temp_dirs: list[TemporaryDirectory] = []
         try:
             await initialize_services(fix_migration=fix_migration)
+            
+            # Initialize rate limiter
+            from langflow.services.limiter.service import init_limiter
+            await init_limiter()
+            
             setup_llm_caching()
             await initialize_super_user_if_needed()
             temp_dirs, bundles_components_paths = await load_bundles_with_error_handling()
@@ -131,6 +137,7 @@ def get_lifespan(*, fix_migration=False, version=None):
             queue_service = get_queue_service()
             if not queue_service.is_started():  # Start if not already started
                 queue_service.start()
+            await initialize_email_service()
             yield
 
         except Exception as exc:
@@ -324,6 +331,14 @@ def setup_app(static_files_dir: Path | None = None, *, backend_only: bool = Fals
     if not backend_only and static_files_dir is not None:
         setup_static_files(app, static_files_dir)
     return app
+
+
+async def initialize_email_service():
+    try:
+        email_service = get_email_service()
+        logger.info("Email service initialized successfully")
+    except Exception as e:
+        logger.error(f"Error initializing email service: {e}")
 
 
 if __name__ == "__main__":

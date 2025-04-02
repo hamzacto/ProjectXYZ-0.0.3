@@ -1862,6 +1862,19 @@ vectorstore-mmr = [
 ]
 
 [[package]]
+name = "email-validator"
+version = "2.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "dnspython" },
+    { name = "idna" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/48/ce/13508a1ec3f8bb981ae4ca79ea40384becc868bfae97fd1c942bb3a001b1/email_validator-2.2.0.tar.gz", hash = "sha256:cb690f344c617a714f22e66ae771445a1ceb46821152df8e165c5f9a364582b7", size = 48967 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d7/ee/bf0adb559ad3c786f12bcbc9296b3f5675f529199bef03e2df281fa1fadb/email_validator-2.2.0-py3-none-any.whl", hash = "sha256:561977c2d73ce3611850a06fa56b414621e0c8faa9d66f2611407d87465da631", size = 33521 },
+]
+
+[[package]]
 name = "embedchain"
 version = "0.1.125"
 source = { registry = "https://pypi.org/simple" }
@@ -2016,6 +2029,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/a2/f5/3f921e59f189e513adb9aef826e2841672d50a399fead4e69afdeb808ff4/fastapi-0.115.7.tar.gz", hash = "sha256:0f106da6c01d88a6786b3248fb4d7a940d071f6f488488898ad5d354b25ed015", size = 293177 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e6/7f/bbd4dcf0faf61bc68a01939256e2ed02d681e9334c1a3cef24d5f77aba9f/fastapi-0.115.7-py3-none-any.whl", hash = "sha256:eb6a8c8bf7f26009e8147111ff15b5177a0e19bb4a45bc3486ab14804539d21e", size = 94777 },
+]
+
+[[package]]
+name = "fastapi-limiter"
+version = "0.1.6"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "fastapi" },
+    { name = "redis" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/7f/99/c7903234488d4dca5f9bccb4f88c2f582a234f0dca33348781c9cf8a48c6/fastapi_limiter-0.1.6.tar.gz", hash = "sha256:6f5fde8efebe12eb33861bdffb91009f699369a3c2862cdc7c1d9acf912ff443", size = 8307 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/cd/b5/6f6b4d18bee1cafc857eae12738b3a03b7d1102b833668be868938c57b9d/fastapi_limiter-0.1.6-py3-none-any.whl", hash = "sha256:2e53179a4208b8f2c8795e38bb001324d3dc37d2800ff49fd28ec5caabf7a240", size = 15829 },
 ]
 
 [[package]]
@@ -4379,8 +4405,10 @@ dependencies = [
     { name = "diskcache" },
     { name = "docstring-parser" },
     { name = "duckdb" },
+    { name = "email-validator" },
     { name = "emoji" },
     { name = "fastapi" },
+    { name = "fastapi-limiter" },
     { name = "fastapi-pagination" },
     { name = "filelock" },
     { name = "firecrawl-py" },
@@ -4388,6 +4416,7 @@ dependencies = [
     { name = "greenlet" },
     { name = "gunicorn" },
     { name = "httpx", extra = ["http2"] },
+    { name = "jinja2" },
     { name = "jq", marker = "sys_platform != 'win32'" },
     { name = "json-repair" },
     { name = "langchain" },
@@ -4418,6 +4447,7 @@ dependencies = [
     { name = "python-docx" },
     { name = "python-jose" },
     { name = "python-multipart" },
+    { name = "redis" },
     { name = "rich" },
     { name = "sentry-sdk", extra = ["fastapi", "loguru"] },
     { name = "setuptools" },
@@ -4440,6 +4470,7 @@ all = [
 ]
 deploy = [
     { name = "celery" },
+    { name = "fastapi-limiter" },
     { name = "flower" },
     { name = "redis" },
 ]
@@ -4514,8 +4545,11 @@ requires-dist = [
     { name = "diskcache", specifier = ">=5.6.3,<6.0.0" },
     { name = "docstring-parser", specifier = ">=0.16,<1.0.0" },
     { name = "duckdb", specifier = ">=1.0.0,<2.0.0" },
+    { name = "email-validator", specifier = ">=2.0.0" },
     { name = "emoji", specifier = ">=2.12.0,<3.0.0" },
     { name = "fastapi", specifier = ">=0.115.2,<1.0.0" },
+    { name = "fastapi-limiter", specifier = ">=0.1.5,<1.0.0" },
+    { name = "fastapi-limiter", marker = "extra == 'deploy'", specifier = ">=0.1.5" },
     { name = "fastapi-pagination", specifier = ">=0.12.29,<1.0.0" },
     { name = "filelock", specifier = ">=3.15.4,<4.0.0" },
     { name = "firecrawl-py", specifier = ">=1.0.16,<2.0.0" },
@@ -4527,6 +4561,7 @@ requires-dist = [
     { name = "httpx", extras = ["http2"], specifier = ">=0.27,<1.0.0" },
     { name = "httpx", extras = ["http2"], marker = "extra == 'dev'", specifier = ">=0.27" },
     { name = "ipykernel", marker = "extra == 'dev'", specifier = ">=6.29.0" },
+    { name = "jinja2", specifier = ">=3.0.0" },
     { name = "jq", marker = "sys_platform != 'win32'", specifier = ">=1.7.0,<2.0.0" },
     { name = "json-repair", specifier = ">=0.30.3" },
     { name = "langchain", specifier = "~=0.3.10" },
@@ -4572,6 +4607,7 @@ requires-dist = [
     { name = "python-docx", specifier = ">=1.1.0,<2.0.0" },
     { name = "python-jose", specifier = ">=3.3.0,<4.0.0" },
     { name = "python-multipart", specifier = ">=0.0.12,<1.0.0" },
+    { name = "redis", specifier = ">=5.0.0,<6.0.0" },
     { name = "redis", marker = "extra == 'all'", specifier = ">=4.6.0" },
     { name = "redis", marker = "extra == 'deploy'", specifier = ">=4.6.0" },
     { name = "requests", marker = "extra == 'dev'", specifier = ">=2.32.0" },

@@ -3,7 +3,7 @@
 ![Langflow](./docs/static/img/hero.png)
 
 <p align="center" style="font-size: 12px;">
-    Langflow is a low-code app builder for RAG and multi-agent AI applications. It’s Python-based and agnostic to any model, API, or database.
+    Langflow is a low-code app builder for RAG and multi-agent AI applications. It's Python-based and agnostic to any model, API, or database.
 </p>
 
 <p align="center" style="font-size: 12px;">
@@ -76,4 +76,43 @@ We welcome contributions from developers of all levels. If you'd like to contrib
 ## ❤️ Contributors
 
 [![langflow contributors](https://contrib.rocks/image?repo=langflow-ai/langflow)](https://github.com/langflow-ai/langflow/graphs/contributors)
+
+## Rate Limiting
+
+Langflow includes rate limiting protection to prevent brute force attacks against critical endpoints like login, password reset, and email verification.
+
+### Configuration
+
+Rate limiting requires a Redis server and can be configured with the following environment variables:
+
+```
+# Enable/disable rate limiting (default: True)
+RATE_LIMITING_ENABLED=True  
+
+# Redis connection settings
+REDIS_HOST=localhost
+REDIS_PORT=6379
+
+# IP ban settings (optional)
+IP_BAN_ENABLED=False
+IP_BAN_THRESHOLD=10  # Number of failed attempts before ban
+IP_BAN_DURATION=3600  # Ban duration in seconds (1 hour)
+```
+
+### Default Rate Limits
+
+- Login: 5 attempts per minute
+- Password reset request: 3 attempts per 10 minutes
+- Email verification: 5 attempts per 10 minutes
+- Registration: 3 attempts per hour
+
+### Running Redis
+
+You can run Redis using Docker:
+
+```bash
+docker run -d --name redis-langflow -p 6379:6379 redis:alpine
+```
+
+Or install it natively on your system.
 

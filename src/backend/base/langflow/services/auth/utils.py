@@ -5,6 +5,8 @@ from collections.abc import Coroutine
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Annotated
 from uuid import UUID
+import os
+import re
 
 from cryptography.fernet import Fernet
 from fastapi import Depends, HTTPException, Security, status
@@ -15,7 +17,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from starlette.websockets import WebSocket
 
 from langflow.services.database.models.api_key.crud import check_key
-from langflow.services.database.models.user.crud import get_user_by_id, get_user_by_username, update_user_last_login_at
+from langflow.services.database.models.user.crud import get_user_by_id, get_user_by_username, update_user_last_login_at, get_user_by_email
 from langflow.services.database.models.user.model import User, UserRead
 from langflow.services.deps import get_db_service, get_session, get_settings_service
 from langflow.services.settings.service import SettingsService
@@ -329,17 +331,54 @@ async def create_refresh_token(refresh_token: str, db: AsyncSession):
 
 
 async def authenticate_user(username: str, password: str, db: AsyncSession) -> User | None:
-    user = await get_user_by_username(db, username)
+    from loguru import logger
+    
+    # Check if the username is an email address
+    email_pattern = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
+    is_email = email_pattern.match(username)
+    
+    if is_email:
+        # If it's an email, try to find user by email
+        user = await get_user_by_email(db, username)
+        if not user:
+            logger.info(f"Authentication failed: User with email not found: {username}")
+            return None
+    else:
+        # If it's a username, find by username as before
+        user = await get_user_by_username(db, username)
+        if not user:
+            logger.info(f"Authentication failed: User not found: {username}")
+            return None
 
-    if not user:
-        return None
-
+    logger.info(f"Authenticating user: {user.username}, is_active={user.is_active}, is_verified={user.is_verified}")
+    
+    # If the user is verified but waiting for admin approval, automatically approve them
+    if user.is_verified and not user.last_login_at:
+        logger.info(f"User {user.username} is verified but waiting for approval. Auto-approving.")
+        user.last_login_at = datetime.now(timezone.utc)
+        await db.commit()
+        await db.refresh(user)
+    
     if not user.is_active:
+        if not user.is_verified:
+            logger.warning(f"Authentication failed: User not verified: {user.username}")
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Please verify your email address")
         if not user.last_login_at:
+            logger.warning(f"Authentication failed: User waiting for approval: {user.username}")
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Waiting for approval")
+        logger.warning(f"Authentication failed: User inactive: {user.username}")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Inactive user")
 
-    return user if verify_password(password, user.password) else None
+    # Refresh the user from the database to ensure we have the latest data
+    await db.refresh(user)
+    logger.info(f"Refreshed user data: {user.username}, is_active={user.is_active}, is_verified={user.is_verified}")
+    
+    if verify_password(password, user.password):
+        logger.info(f"Authentication successful: {user.username}")
+        return user
+    else:
+        logger.warning(f"Authentication failed: Invalid password for user: {user.username}")
+        return None
 
 
 def add_padding(s):

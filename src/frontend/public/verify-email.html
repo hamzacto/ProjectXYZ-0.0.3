@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Email Verification - Langflow</title>
+    <style>
+        :root {
+            --background: #ffffff;
+            --foreground: #1e293b;
+            --muted: #f1f5f9;
+            --muted-foreground: #64748b;
+            --primary: #3b82f6;
+            --primary-foreground: #ffffff;
+            --destructive: #ef4444;
+            --success: #10b981;
+            --border: #e2e8f0;
+            --ring: #3b82f6;
+        }
+        
+        body {
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 0;
+            line-height: 1.5;
+            background-color: var(--muted);
+            color: var(--foreground);
+        }
+        
+        .flex {
+            display: flex;
+        }
+        
+        .h-screen {
+            height: 100vh;
+        }
+        
+        .w-full {
+            width: 100%;
+        }
+        
+        .flex-col {
+            flex-direction: column;
+        }
+        
+        .items-center {
+            align-items: center;
+        }
+        
+        .justify-center {
+            justify-content: center;
+        }
+        
+        .gap-4 {
+            gap: 1rem;
+        }
+        
+        .gap-2 {
+            gap: 0.5rem;
+        }
+        
+        .rounded-lg {
+            border-radius: 0.5rem;
+        }
+        
+        .bg-background {
+            background-color: var(--background);
+        }
+        
+        .shadow-lg {
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+        }
+        
+        .p-8 {
+            padding: 2rem;
+        }
+        
+        .w-96 {
+            width: 24rem;
+        }
+        
+        .text-center {
+            text-align: center;
+        }
+        
+        .text-5xl {
+            font-size: 3rem;
+        }
+        
+        .mb-4 {
+            margin-bottom: 1rem;
+        }
+        
+        .text-2xl {
+            font-size: 1.5rem;
+        }
+        
+        .font-semibold {
+            font-weight: 600;
+        }
+        
+        .text-primary {
+            color: var(--primary);
+        }
+        
+        .text-lg {
+            font-size: 1.125rem;
+        }
+        
+        .text-sm {
+            font-size: 0.875rem;
+        }
+        
+        .text-muted-foreground {
+            color: var(--muted-foreground);
+        }
+        
+        .h-16, .w-16 {
+            height: 4rem;
+            width: 4rem;
+        }
+        
+        .h-12, .w-12 {
+            height: 3rem;
+            width: 3rem;
+        }
+        
+        .rounded-full {
+            border-radius: 9999px;
+        }
+        
+        .bg-green-100 {
+            background-color: #dcfce7;
+        }
+        
+        .bg-red-100 {
+            background-color: #fee2e2;
+        }
+        
+        .text-green-600 {
+            color: var(--success);
+        }
+        
+        .text-red-600 {
+            color: var(--destructive);
+        }
+        
+        .text-destructive {
+            color: var(--destructive);
+        }
+        
+        .mt-2 {
+            margin-top: 0.5rem;
+        }
+        
+        .button {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 0.25rem;
+            font-size: 0.875rem;
+            font-weight: 500;
+            line-height: 1;
+            padding: 0.75rem 1rem;
+            transition-property: color, background-color, border-color;
+            transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+            transition-duration: 150ms;
+            cursor: pointer;
+            text-decoration: none;
+            width: 100%;
+        }
+        
+        .button-primary {
+            background-color: var(--primary);
+            color: var(--primary-foreground);
+            border: 1px solid var(--primary);
+        }
+        
+        .button-primary:hover {
+            opacity: 0.9;
+        }
+        
+        .button-outline {
+            background-color: transparent;
+            color: var(--foreground);
+            border: 1px solid var(--border);
+        }
+        
+        .button-outline:hover {
+            background-color: var(--muted);
+        }
+        
+        .animate-spin {
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            from {
+                transform: rotate(0deg);
+            }
+            to {
+                transform: rotate(360deg);
+            }
+        }
+        
+        .hidden {
+            display: none;
+        }
+
+        /* Success and error icon styles */
+        .icon-container {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 4rem;
+            height: 4rem;
+            border-radius: 9999px;
+            margin: 0 auto;
+        }
+
+        .icon-container svg {
+            width: 2rem;
+            height: 2rem;
+            stroke: currentColor;
+            stroke-width: 2;
+        }
+        
+    </style>
+</head>
+<body>
+    <div class="flex h-screen w-full flex-col items-center justify-center">
+        <div class="flex w-96 flex-col items-center justify-center gap-4 rounded-lg bg-background p-8 shadow-lg">
+            <div class="flex items-center justify-center mb-4">
+                <svg class="h-16 w-16 text-primary" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M7 8L3 12L7 16M17 8L21 12L17 16M14 4L10 20" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+            </div>
+            <h1 class="mb-4 text-2xl font-semibold text-primary">Email Verification</h1>
+
+            <div id="loading" class="flex flex-col items-center gap-2 w-full">
+                <div class="h-12 w-12 animate-spin rounded-full border-b-2 border-primary"></div>
+                <p class="text-center text-lg">Verifying your email...</p>
+            </div>
+
+            <div id="success" class="hidden flex flex-col items-center gap-4 w-full">
+                <div class="icon-container bg-green-100">
+                    <svg 
+                        class="text-green-600" 
+                        fill="none" 
+                        stroke="currentColor" 
+                        viewBox="0 0 24 24" 
+                        xmlns="http://www.w3.org/2000/svg"
+                    >
+                        <path 
+                            stroke-linecap="round" 
+                            stroke-linejoin="round" 
+                            stroke-width="2" 
+                            d="M5 13l4 4L19 7"  
+                        />
+                    </svg>
+                </div>
+                <p class="text-center text-lg">Your email has been successfully verified!</p>
+                <p class="text-center text-sm text-muted-foreground">
+                    You can now log in to your account.
+                </p>
+                <a 
+                    href="/login" 
+                    class="button button-primary mt-2" 
+                >
+                    Go to Login
+                </a>
+            </div>
+
+            <div id="error" class="hidden flex flex-col items-center gap-4 w-full">
+                <div class="flex h-16 w-16 items-center justify-center rounded-full bg-red-100">
+                    <svg 
+                        class="h-8 w-8 text-red-600" 
+                        fill="none" 
+                        stroke="currentColor" 
+                        viewBox="0 0 24 24" 
+                        xmlns="http://www.w3.org/2000/svg"
+                    >
+                        <path 
+                            stroke-linecap="round" 
+                            stroke-linejoin="round" 
+                            stroke-width="2" 
+                            d="M6 18L18 6M6 6l12 12" 
+                        />
+                    </svg>
+                </div>
+                <p class="text-center text-lg">Verification Failed</p>
+                <p id="error-message" class="text-center text-sm text-destructive"></p>
+                <div class="flex w-full flex-col gap-2">
+                    <a 
+                        href="/signup" 
+                        class="button button-primary"
+                    >
+                        Sign Up Again
+                    </a>
+                    <a 
+                        href="/login" 
+                        class="button button-outline"
+                    >
+                        Back to Login
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', async () => {
+            const loadingElement = document.getElementById('loading');
+            const successElement = document.getElementById('success');
+            const errorElement = document.getElementById('error');
+            const errorMessageElement = document.getElementById('error-message');
+            
+            // Get token from URL parameters
+            const urlParams = new URLSearchParams(window.location.search);
+            const token = urlParams.get('token');
+            
+            if (!token) {
+                loadingElement.classList.add('hidden');
+                errorElement.classList.remove('hidden');
+                errorMessageElement.textContent = 'Missing verification token';
+                return;
+            }
+            
+            try {
+                // Make direct request to backend API
+                const backendUrl = window.location.origin;
+                const response = await fetch(`${backendUrl}/api/v1/users/verify?token=${token}`);
+                const data = await response.json();
+                
+                if (response.ok) {
+                    loadingElement.classList.add('hidden');
+                    successElement.classList.remove('hidden');
+                } else {
+                    loadingElement.classList.add('hidden');
+                    errorElement.classList.remove('hidden');
+                    errorMessageElement.textContent = data.detail || 'Failed to verify email. The token may be invalid or expired.';
+                }
+            } catch (error) {
+                loadingElement.classList.add('hidden');
+                errorElement.classList.remove('hidden');
+                errorMessageElement.textContent = 'Failed to verify email. Please try again.';
+                console.error('Verification error:', error);
+            }
+        });
+    </script>
+</body>
+</html> 
