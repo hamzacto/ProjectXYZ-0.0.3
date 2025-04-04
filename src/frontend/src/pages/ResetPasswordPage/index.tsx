@@ -65,8 +65,13 @@ export default function ResetPassword(): JSX.Element {
       }
     } catch (err: any) {
       console.error("Password reset error:", err);
-      const errorMessage = err.response?.data?.detail || "Failed to reset password. Please try again.";
-      setError(errorMessage);
+      // Check for social login error message
+      if (err.response?.data?.detail?.includes("social login")) {
+        setError("This account is connected with a social login provider (like Google). Please use your social login to access your account.");
+      } else {
+        const errorMessage = err.response?.data?.detail || "Failed to reset password. Please try again.";
+        setError(errorMessage);
+      }
     } finally {
       setIsLoading(false);
     }

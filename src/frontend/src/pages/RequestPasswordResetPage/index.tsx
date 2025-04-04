@@ -97,6 +97,10 @@ const RequestPasswordResetPage: React.FC = () => {
             <p className="mb-4 text-sm text-muted-foreground">
               Enter your email address and we'll send you instructions to reset your password.
             </p>
+            
+            <p className="mb-4 text-sm text-muted-foreground">
+              <strong>Note:</strong> If you signed up with Google, please use the Google login option instead of password reset.
+            </p>
 
             <div className="mb-6 w-full">
               <Form.Field name="email">

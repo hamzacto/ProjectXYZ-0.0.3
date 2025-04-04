@@ -200,6 +200,10 @@ async def request_password_reset(
     if not user:
         return {"message": "If your account exists, a password reset link has been sent to your email"}
     
+    # Prevent password reset for accounts linked to OAuth providers like Google
+    if user.oauth_provider:
+        return {"message": "If your account exists, a password reset link has been sent to your email"}
+    
     # Send password reset email
     email_service = get_email_service()
     await email_service.send_password_reset_email(user, session)
@@ -270,6 +274,11 @@ async def reset_password(
             if user.email != email:
                 logger.warning(f"Email mismatch: token {email} vs user {user.email}")
                 raise HTTPException(status_code=400, detail="Invalid or expired token")
+            
+            # Check if user is authenticated via OAuth
+            if user.oauth_provider:
+                logger.warning(f"Password reset attempted for OAuth account: {user.email}, provider: {user.oauth_provider}")
+                raise HTTPException(status_code=400, detail="Password reset is not available for accounts connected with social login. Please use your social login provider to access your account.")
             
         except JWTError as e:
             logger.warning(f"JWT verification failed: {e}")
@@ -365,6 +374,14 @@ async def reset_password(
 
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+        
+    # Check if user is authenticated via OAuth
+    if user.oauth_provider:
+        raise HTTPException(
+            status_code=400, 
+            detail="Password reset is not available for accounts connected with social login. Please use your social login provider to access your account."
+        )
+        
     if verify_password(user_update.password, user.password):
         raise HTTPException(status_code=400, detail="You can't use your current password")
     new_password = get_password_hash(user_update.password)
