@@ -419,6 +419,7 @@ async def delete_user(
 async def debug_email_templates():
     """Debug endpoint to check email templates"""
     try:
+        from loguru import logger
         email_service = get_email_service()
         debug_info = email_service.debug_template_paths()
         return {"status": "success", "debug_info": debug_info}

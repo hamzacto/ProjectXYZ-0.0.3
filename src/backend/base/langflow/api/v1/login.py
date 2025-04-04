@@ -500,78 +500,101 @@ async def google_auth_callback(
         auto_login_option = "google"
         langflow_auto_login_cookie = "langflow_auto_login"
         
-        # Create HTML with enhanced security protections
-        html_content = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; connect-src 'self';">
-            <title>Authentication Successful</title>
-            <script>
-                // Sanitize values from server to prevent XSS
-                const sanitize = function(str) {{
-                    const temp = document.createElement('div');
-                    temp.textContent = str;
-                    return temp.innerHTML;
-                }};
-                
-                // More secure cookie setting function with explicit options
-                function setCookie(name, value, days, domain) {{
-                    const sanitizedName = sanitize(name);
-                    const sanitizedValue = sanitize(value);
-                    const sanitizedDomain = sanitize(domain);
-                    
-                    let expires = "";
-                    
-                    if (days) {{
-                        const date = new Date();
-                        date.setTime(date.getTime() + (days * 24 * 60 * 60 * 1000));
-                        expires = "; expires=" + date.toUTCString();
-                    }}
-                    
-                    // For localhost, don't set domain attribute
-                    const domainPart = domain.includes('localhost') ? '' : `; domain=${{sanitizedDomain}}`;
-                    
-                    // Set SameSite policy based on environment
-                    const sameSite = domain.includes('localhost') ? '; SameSite=Lax' : '; SameSite=None; Secure';
-                    
-                    // Set the cookie with security attributes
-                    document.cookie = sanitizedName + "=" + sanitizedValue + expires + domainPart + sameSite + "; path=/";
-                    
-                    // Debug cookie setting (only in dev/localhost)
-                    if (domain.includes('localhost')) {{
-                        console.log(`Setting cookie ${{sanitizedName}}`);
-                    }}
-                }}
-                
-                // Detect localhost environment for different cookie handling
-                const isLocalhost = window.location.hostname === 'localhost' || 
-                                   window.location.hostname === '127.0.0.1';
-                                   
-                // Set cookies with proper sanitization
-                setCookie('access_token_lf', '{tokens['access_token']}', {auth_settings.ACCESS_TOKEN_EXPIRE_SECONDS/(24*60*60)}, '{frontend_domain}');
-                setCookie('refresh_token_lf', '{tokens['refresh_token']}', {auth_settings.REFRESH_TOKEN_EXPIRE_SECONDS/(24*60*60)}, '{frontend_domain}');
-                setCookie('{langflow_auto_login_cookie}', '{auto_login_option}', 365, '{frontend_domain}');
-                {"setCookie('apikey_tkn_lflw', '" + str(user.store_api_key) + "', 365, '" + frontend_domain + "');" if user.store_api_key else ""}
-                
-                // Safe redirection after a small delay to ensure cookies are set
-                setTimeout(function() {{
-                    window.location.href = "{FRONTEND_URL}";
-                }}, 1000);
-            </script>
-        </head>
-        <body>
-            <h2>Authentication Successful!</h2>
-            <p>Redirecting you to the application...</p>
-            <noscript>
-                <p>JavaScript is required for this page. If not redirected automatically, <a href="{FRONTEND_URL}">click here</a>.</p>
-            </noscript>
-        </body>
-        </html>
-        """
-        
-        # Create a response with the HTML content and add security headers
-        response = HTMLResponse(content=html_content)
+        # Set cookies server-side with proper security attributes
+        # For development environment, adjust cookie settings to work with localhost
+        if is_dev_environment():
+            # Dev environment - more permissive for localhost testing
+            response = RedirectResponse(FRONTEND_URL)
+            
+            # In dev mode, we use non-HttpOnly cookies to allow the frontend to access them
+            # This is only for development and testing purposes
+            response.set_cookie(
+                "access_token_lf",
+                tokens["access_token"],
+                httponly=False,  # Non-HttpOnly for dev environment
+                secure=False,    # Don't require HTTPS in dev
+                samesite="lax",  # More compatible with redirects in dev
+                max_age=auth_settings.ACCESS_TOKEN_EXPIRE_SECONDS,
+                path="/"
+            )
+            response.set_cookie(
+                "refresh_token_lf",
+                tokens["refresh_token"],
+                httponly=False,  # Non-HttpOnly for dev environment
+                secure=False,    # Don't require HTTPS in dev
+                samesite="lax",  # More compatible with redirects in dev
+                max_age=auth_settings.REFRESH_TOKEN_EXPIRE_SECONDS,
+                path="/"
+            )
+            # Set auto login cookie
+            response.set_cookie(
+                langflow_auto_login_cookie,
+                auto_login_option,
+                httponly=False,
+                secure=False,
+                samesite="lax",
+                max_age=60*60*24*365,  # 1 year
+                path="/"
+            )
+            # Set API key cookie if available
+            if user.store_api_key:
+                response.set_cookie(
+                    "apikey_tkn_lflw",
+                    str(user.store_api_key),
+                    httponly=False,
+                    secure=False,
+                    samesite="lax",
+                    max_age=None,  # Session cookie
+                    path="/"
+                )
+        else:
+            # Production environment - strict security
+            response = RedirectResponse(FRONTEND_URL)
+            
+            # Set secure HttpOnly cookies in production
+            response.set_cookie(
+                "access_token_lf",
+                tokens["access_token"],
+                httponly=True,     # HttpOnly to prevent JavaScript access
+                secure=True,       # Require HTTPS in production
+                samesite="strict", # Strict same-site policy in production
+                max_age=auth_settings.ACCESS_TOKEN_EXPIRE_SECONDS,
+                path="/",
+                domain=frontend_domain if not frontend_domain.startswith("localhost") else None
+            )
+            response.set_cookie(
+                "refresh_token_lf",
+                tokens["refresh_token"],
+                httponly=True,     # HttpOnly to prevent JavaScript access
+                secure=True,       # Require HTTPS in production
+                samesite="strict", # Strict same-site policy in production
+                max_age=auth_settings.REFRESH_TOKEN_EXPIRE_SECONDS,
+                path="/",
+                domain=frontend_domain if not frontend_domain.startswith("localhost") else None
+            )
+            # Set auto login cookie
+            response.set_cookie(
+                langflow_auto_login_cookie,
+                auto_login_option,
+                httponly=False,    # Allow JavaScript access for this non-sensitive cookie
+                secure=True,
+                samesite="strict",
+                max_age=60*60*24*365,  # 1 year
+                path="/",
+                domain=frontend_domain if not frontend_domain.startswith("localhost") else None
+            )
+            # Set API key cookie if available
+            if user.store_api_key:
+                response.set_cookie(
+                    "apikey_tkn_lflw",
+                    str(user.store_api_key),
+                    httponly=True,  # HttpOnly for sensitive API key
+                    secure=True,
+                    samesite="strict",
+                    max_age=None,   # Session cookie
+                    path="/",
+                    domain=frontend_domain if not frontend_domain.startswith("localhost") else None
+                )
         
         # Add security headers to prevent XSS and other attacks
         response.headers["X-Content-Type-Options"] = "nosniff"
@@ -585,39 +608,8 @@ async def google_auth_callback(
             # Log the specific HTTPException detail
             logger.warning(f"Google OAuth callback HTTPException: {e.detail} (Status: {e.status_code})")
             
-            # Create HTML with error message, including enhanced security
-            html_content = f"""
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; connect-src 'self';">
-                <title>Authentication Failed</title>
-                <script>
-                    // Use a safer method than localStorage for sensitive errors
-                    // Store error message in session storage (cleared when browser closes)
-                    sessionStorage.setItem('auth_error', 'Google authentication failed (Status: {e.status_code})');
-                    
-                    // Debug for localhost
-                    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {{
-                        console.log('Setting auth_error in sessionStorage');
-                    }}
-                    
-                    // Redirect to login page after a small delay
-                    setTimeout(function() {{
-                        window.location.href = "{FRONTEND_URL}/login";
-                    }}, 1000);
-                </script>
-            </head>
-            <body>
-                <h2>Authentication Failed</h2>
-                <p>Redirecting to login page...</p>
-                <noscript>
-                    <p>JavaScript is required for this page. If not redirected automatically, <a href="{FRONTEND_URL}/login">click here</a>.</p>
-                </noscript>
-            </body>
-            </html>
-            """
-            response = HTMLResponse(content=html_content)
+            # Create a redirect response with error handling
+            response = RedirectResponse(f"{FRONTEND_URL}/login?error=auth_failed&status={e.status_code}")
             
             # Add security headers
             response.headers["X-Content-Type-Options"] = "nosniff"
@@ -629,39 +621,8 @@ async def google_auth_callback(
             # Log the detailed error but return a generic message to the user
             logger.error(f"Google OAuth callback error: {str(e)}")
             
-            # Create HTML with generic error message and enhanced security
-            html_content = f"""
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; connect-src 'self';">
-                <title>Authentication Failed</title>
-                <script>
-                    // Use a safer method than localStorage for sensitive errors
-                    // Store error message in session storage (cleared when browser closes)
-                    sessionStorage.setItem('auth_error', 'Google authentication failed. Please try again.');
-                    
-                    // Debug for localhost
-                    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {{
-                        console.log('Setting auth_error in sessionStorage');
-                    }}
-                    
-                    // Redirect to login page after a small delay
-                    setTimeout(function() {{
-                        window.location.href = "{FRONTEND_URL}/login";
-                    }}, 1000);
-                </script>
-            </head>
-            <body>
-                <h2>Authentication Failed</h2>
-                <p>Redirecting to login page...</p>
-                <noscript>
-                    <p>JavaScript is required for this page. If not redirected automatically, <a href="{FRONTEND_URL}/login">click here</a>.</p>
-                </noscript>
-            </body>
-            </html>
-            """
-            response = HTMLResponse(content=html_content)
+            # Create a redirect response with generic error
+            response = RedirectResponse(f"{FRONTEND_URL}/login?error=auth_failed")
             
             # Add security headers
             response.headers["X-Content-Type-Options"] = "nosniff"
