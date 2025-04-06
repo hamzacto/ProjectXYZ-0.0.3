@@ -16,6 +16,7 @@ class TokenUsageRegistry:
     
     _instance = None
     _usage_log = []
+    _flow_context = {}
     
     @classmethod
     def get_instance(cls):
@@ -24,23 +25,84 @@ class TokenUsageRegistry:
             cls._instance = TokenUsageRegistry()
         return cls._instance
     
+    @classmethod
+    def set_flow_context(cls, flow_id=None, component_id=None):
+        """Set the current flow context for token tracking."""
+        instance = cls.get_instance()
+        instance._flow_context = {
+            "flow_id": flow_id,
+            "component_id": component_id
+        }
+        print(f"[Token Tracking] Set context: Flow {flow_id}, Component {component_id}")
+    
+    @classmethod
+    def get_flow_context(cls):
+        """Get the current flow context."""
+        return cls.get_instance()._flow_context
+    
+    @classmethod
+    def clear_flow_context(cls):
+        """Clear the current flow context."""
+        cls.get_instance()._flow_context = {}
+    
     def record_usage(self, model, prompt_tokens, completion_tokens, total_tokens):
-        """Record token usage from an API call."""
+        """Record token usage from an API call and send to CreditService."""
         import datetime
+        from langflow.services.credit.service import TokenUsage
+        
+        # Get current flow context
+        flow_context = self._flow_context
+        flow_id = flow_context.get("flow_id")
+        component_id = flow_context.get("component_id")
+        
         usage_entry = {
             "timestamp": datetime.datetime.now().isoformat(),
             "model": model,
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
-            "total_tokens": total_tokens
+            "total_tokens": total_tokens,
+            "flow_id": flow_id,
+            "component_id": component_id
         }
         self._usage_log.append(usage_entry)
         
-        # Print usage information immediately
-        print(f"\n[Token Usage] Model: {model}")
-        print(f"[Token Usage] Input tokens: {prompt_tokens}")
-        print(f"[Token Usage] Output tokens: {completion_tokens}")
-        print(f"[Token Usage] Total tokens: {total_tokens}\n")
+        # Log using the existing CreditService
+        try:
+            from langflow.services.manager import service_manager
+            from langflow.services.schema import ServiceType
+            
+            # Create TokenUsage object for CreditService
+            token_usage = TokenUsage(
+                model_name=model,
+                input_tokens=prompt_tokens,
+                output_tokens=completion_tokens
+            )
+            
+            # Get the credit service from the service manager
+            credit_service = service_manager.get(ServiceType.CREDIT_SERVICE)
+            if credit_service:
+                # Generate a unique run_id using flow_id and component_id
+                run_id = f"{flow_id}_{component_id}_{datetime.datetime.now().timestamp()}"
+                # Track the run with token usage
+                credit_service.track_run(run_id=run_id, token_usage=token_usage)
+            else:
+                # Fallback to simple print if service not available
+                cost_per_1k_input = 0.01  # Default cost per 1K tokens
+                cost_per_1k_output = 0.03  # Default cost per 1K tokens
+                input_cost = (prompt_tokens / 1000) * cost_per_1k_input
+                output_cost = (completion_tokens / 1000) * cost_per_1k_output
+                total_cost = input_cost + output_cost
+                
+                print(f"\n[LLM Cost] Flow: {flow_id or 'unknown'}")
+                print(f"[LLM Cost] Component: {component_id or 'unknown'}")
+                print(f"[LLM Cost] Model: {model}")
+                print(f"[LLM Cost] Prompt tokens: {prompt_tokens} (${input_cost:.6f})")
+                print(f"[LLM Cost] Completion tokens: {completion_tokens} (${output_cost:.6f})")
+                print(f"[LLM Cost] Total cost: ${total_cost:.6f}\n")
+        except Exception as e:
+            print(f"[Token Tracking] Error connecting to CreditService: {e}")
+            # Just log basic info if we hit an error
+            print(f"[Token Usage] Model: {model}, Input: {prompt_tokens}, Output: {completion_tokens}")
         
     def get_all_usage(self):
         """Get all recorded token usage."""

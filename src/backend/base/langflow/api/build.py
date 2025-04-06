@@ -244,6 +244,14 @@ async def generate_flow_events(
         top_level_vertices = []
         start_time = time.perf_counter()
         error_message = None
+        
+        # Set flow context for token tracking
+        try:
+            from langflow.utils.validate import TokenUsageRegistry
+            TokenUsageRegistry.set_flow_context(flow_id=flow_id_str, component_id=vertex_id)
+        except Exception as e:
+            logger.warning(f"Failed to set token tracking context: {e}")
+        
         try:
             vertex = graph.get_vertex(vertex_id)
             try:
@@ -348,6 +356,14 @@ async def generate_flow_events(
             message = parse_exception(exc)
             raise HTTPException(status_code=500, detail=message) from exc
 
+        finally:
+            # Clear token tracking context when done
+            try:
+                from langflow.utils.validate import TokenUsageRegistry
+                TokenUsageRegistry.clear_flow_context()
+            except Exception as e:
+                logger.warning(f"Failed to clear token tracking context: {e}")
+        
         return build_response
 
     async def build_vertices(

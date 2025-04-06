@@ -100,6 +100,17 @@ class OpenAIModelComponent(LCModelComponent):
         max_retries = self.max_retries
         timeout = self.timeout
 
+        # Log model name for token tracking
+        try:
+            from langflow.utils.validate import TokenUsageRegistry
+            context = TokenUsageRegistry.get_flow_context()
+            if context:
+                component_id = context.get("component_id")
+                flow_id = context.get("flow_id")
+                print(f"[OpenAIModel] Building model {model_name} for component {component_id} in flow {flow_id}")
+        except Exception as e:
+            print(f"[OpenAIModel] Error getting token context: {e}")
+
         # Correct way to access environment variables in Python
         api_key = os.getenv("OPENAI_API_KEY")
         self.api_key = api_key

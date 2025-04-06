@@ -232,6 +232,9 @@ async def patched_aiter_bytes(self, *args, **kwargs):
             )
         except Exception as e:
             print(f"[HTTPX Stream] Error recording usage: {e}")
+            # Print the traceback for debugging
+            import traceback
+            traceback.print_exc()
             
     except Exception as e:
         print(f"[HTTPX Stream] Error intercepting stream: {e}")
