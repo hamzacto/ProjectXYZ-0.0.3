@@ -8,10 +8,55 @@ from typing import Optional, Union
 from langchain_core._api.deprecation import LangChainDeprecationWarning
 from loguru import logger
 from pydantic import ValidationError
-
 from langflow.field_typing.constants import CUSTOM_COMPONENT_SUPPORTED_TYPES, DEFAULT_IMPORT_STRING
 
-
+# Keep this class for usage tracking - it will be populated by the HTTPX Stream implementation
+class TokenUsageRegistry:
+    """Global registry for storing token usage information from OpenAI calls."""
+    
+    _instance = None
+    _usage_log = []
+    
+    @classmethod
+    def get_instance(cls):
+        """Get singleton instance of registry."""
+        if cls._instance is None:
+            cls._instance = TokenUsageRegistry()
+        return cls._instance
+    
+    def record_usage(self, model, prompt_tokens, completion_tokens, total_tokens):
+        """Record token usage from an API call."""
+        import datetime
+        usage_entry = {
+            "timestamp": datetime.datetime.now().isoformat(),
+            "model": model,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens
+        }
+        self._usage_log.append(usage_entry)
+        
+        # Print usage information immediately
+        print(f"\n[Token Usage] Model: {model}")
+        print(f"[Token Usage] Input tokens: {prompt_tokens}")
+        print(f"[Token Usage] Output tokens: {completion_tokens}")
+        print(f"[Token Usage] Total tokens: {total_tokens}\n")
+        
+    def get_all_usage(self):
+        """Get all recorded token usage."""
+        return self._usage_log
+    
+    def get_total_usage(self):
+        """Get total token usage across all calls."""
+        total_prompt = sum(entry["prompt_tokens"] for entry in self._usage_log)
+        total_completion = sum(entry["completion_tokens"] for entry in self._usage_log)
+        total = sum(entry["total_tokens"] for entry in self._usage_log)
+        return {
+            "prompt_tokens": total_prompt,
+            "completion_tokens": total_completion,
+            "total_tokens": total
+        }
+        
 def add_type_ignores() -> None:
     if not hasattr(ast, "TypeIgnore"):
 

@@ -48,7 +48,7 @@ from langflow.services.deps import get_session_service, get_settings_service, ge
 from langflow.services.settings.feature_flags import FEATURE_FLAGS
 from langflow.services.telemetry.schema import RunPayload
 from langflow.utils.version import get_version_info
-
+from langflow.utils.validate import TokenUsageRegistry
 if TYPE_CHECKING:
     from langflow.services.event_manager import EventManager
     from langflow.services.settings.service import SettingsService
@@ -98,6 +98,150 @@ def validate_input_and_tweaks(input_request: SimplifiedAPIRequest) -> None:
             msg = "If you pass an input_value to the text input, you cannot pass a tweak with the same name."
             raise InvalidChatInputError(msg)
 
+
+# HTTPX Stream interceptor for accurate token tracking
+import httpx
+import re
+import json
+from functools import wraps
+
+# Store original method
+original_aiter_bytes = httpx.Response.aiter_bytes
+
+# Create patched version that intercepts OpenAI streaming responses
+@wraps(original_aiter_bytes)
+async def patched_aiter_bytes(self, *args, **kwargs):
+    # Call original method to get async generator
+    async_generator = original_aiter_bytes(self, *args, **kwargs)
+    
+    # Check if this is an OpenAI streaming response
+    is_openai = False
+    request_url = str(self.request.url) if hasattr(self, "request") else ""
+    if "api.openai.com" in request_url and "chat/completions" in request_url:
+        is_openai = True
+        print(f"[HTTPX Intercept] Detected OpenAI streaming API call to {request_url}")
+        # Extract model from request body if available
+        model = "unknown"
+        prompt_tokens = 0
+        try:
+            if hasattr(self.request, "content") and self.request.content:
+                request_body = json.loads(self.request.content.decode("utf-8", errors="ignore"))
+                model = request_body.get("model", "unknown")
+                # Get the encoding for this model
+                import tiktoken
+                try:
+                    encoding = tiktoken.encoding_for_model(model) if model != "unknown" else tiktoken.get_encoding("cl100k_base")
+                    # Track this encoding for later use with output tokens
+                    self._tiktoken_encoding = encoding
+                    # Count input tokens accurately using tiktoken
+                    for message in request_body.get("messages", []):
+                        if isinstance(message, dict) and "content" in message:
+                            prompt_tokens += len(encoding.encode(message["content"]))
+                except Exception as e:
+                    print(f"[HTTPX Intercept] Error counting input tokens: {e}")
+        except Exception as e:
+            print(f"[HTTPX Intercept] Error parsing request body: {e}")
+        
+        # Start with these values
+        completion_tokens = 0
+        buffer = b""
+        
+        # Store encoding for reuse with output tokens
+        self._model = model
+        try:
+            import tiktoken
+            self._tiktoken_encoding = tiktoken.encoding_for_model(model) if model != "unknown" else tiktoken.get_encoding("cl100k_base")
+        except Exception as e:
+            print(f"[HTTPX Intercept] Error creating tiktoken encoding: {e}")
+            self._tiktoken_encoding = None
+    
+    # If not an OpenAI call, just return original generator
+    if not is_openai:
+        async for chunk in async_generator:
+            yield chunk
+        return
+    
+    # For OpenAI calls, intercept chunks and count tokens
+    buffer = b""
+    
+    # Process chunks
+    try:
+        async for chunk in async_generator:
+            # Pass through chunk
+            yield chunk
+            
+            # Add to buffer for processing
+            buffer += chunk
+            
+            # Process any complete lines
+            if b"\n\n" in buffer:
+                lines = buffer.split(b"\n\n")
+                buffer = lines.pop()  # Keep incomplete line
+                
+                for line in lines:
+                    if line.startswith(b"data: "):
+                        data_str = line[6:].decode("utf-8", errors="ignore")
+                        if data_str.strip() == "[DONE]":
+                            continue
+                        
+                        try:
+                            data = json.loads(data_str)
+                            if "choices" in data and len(data["choices"]) > 0:
+                                choice = data["choices"][0]
+                                if "delta" in choice and "content" in choice["delta"]:
+                                    content = choice["delta"]["content"]
+                                    # Count output tokens accurately using tiktoken
+                                    if hasattr(self, "_tiktoken_encoding") and self._tiktoken_encoding:
+                                        tokens_in_chunk = len(self._tiktoken_encoding.encode(content))
+                                        completion_tokens += tokens_in_chunk
+                        except Exception as e:
+                            print(f"[HTTPX Intercept] Error parsing chunk: {e}")
+        
+        # Process any remaining data in buffer
+        if buffer and buffer.startswith(b"data: "):
+            try:
+                data_str = buffer[6:].decode("utf-8", errors="ignore")
+                if data_str.strip() != "[DONE]":
+                    data = json.loads(data_str)
+                    if "choices" in data and len(data["choices"]) > 0:
+                        choice = data["choices"][0]
+                        if "delta" in choice and "content" in choice["delta"]:
+                            content = choice["delta"]["content"]
+                            # Count tokens accurately using tiktoken
+                            if hasattr(self, "_tiktoken_encoding") and self._tiktoken_encoding:
+                                tokens_in_chunk = len(self._tiktoken_encoding.encode(content))
+                                completion_tokens += tokens_in_chunk
+            except Exception as e:
+                print(f"[HTTPX Intercept] Error processing buffer: {e}")
+        
+        # Log total token usage
+        total_tokens = prompt_tokens + completion_tokens
+        print(f"\n[HTTPX Stream] Model: {model}")
+        print(f"[HTTPX Stream] Input tokens: {prompt_tokens}")
+        print(f"[HTTPX Stream] Output tokens: {completion_tokens}")
+        print(f"[HTTPX Stream] Total tokens: {total_tokens}\n")
+        
+        # Record in registry
+        try:
+            registry = TokenUsageRegistry.get_instance()
+            registry.record_usage(
+                model=model,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=total_tokens
+            )
+        except Exception as e:
+            print(f"[HTTPX Stream] Error recording usage: {e}")
+            
+    except Exception as e:
+        print(f"[HTTPX Stream] Error intercepting stream: {e}")
+        # Ensure we yield remaining chunks if there's an error
+        async for chunk in async_generator:
+            yield chunk
+
+# Apply patch
+httpx.Response.aiter_bytes = patched_aiter_bytes
+print("[INFO] Patched HTTPX.Response.aiter_bytes for streaming token tracking")
 
 async def simple_run_flow(
     flow: Flow,
