@@ -9,6 +9,9 @@ from langchain_core._api.deprecation import LangChainDeprecationWarning
 from loguru import logger
 from pydantic import ValidationError
 from langflow.field_typing.constants import CUSTOM_COMPONENT_SUPPORTED_TYPES, DEFAULT_IMPORT_STRING
+from langflow.services.manager import service_manager
+from langflow.services.schema import ServiceType
+from langflow.services.credit.service import TokenUsage
 
 # Keep this class for usage tracking - it will be populated by the HTTPX Stream implementation
 class TokenUsageRegistry:
@@ -17,6 +20,8 @@ class TokenUsageRegistry:
     _instance = None
     _usage_log = []
     _flow_context = {}
+    _flow_tracking = {}  # Track cumulative usage per flow
+    _kb_tools_invoked = {}  # Track KB tools that have been invoked
     
     @classmethod
     def get_instance(cls):
@@ -34,6 +39,37 @@ class TokenUsageRegistry:
             "component_id": component_id
         }
         print(f"[Token Tracking] Set context: Flow {flow_id}, Component {component_id}")
+        
+        # If we see an invoking line in the logs right before this context is set, record it
+        # This is a workaround for tools not being properly tracked through the callback
+        if flow_id and component_id and "agent" in component_id.lower():
+            # Check if there's evidence of KB tool invocation in the logs
+            import builtins
+            original_print = builtins.print
+            
+            def detect_kb_invocation(text, kb_name=None):
+                """Detect KB tool invocations in logged text and record them."""
+                if isinstance(text, str) and text.startswith("Inevoking: `") and "-" in text:
+                    # Format is typically: Invoking: `Milvus-search_documents` with `{'search_query': '...'}`
+                    try:
+                        # Extract the tool name (e.g., "Milvus-search_documents")
+                        tool_part = text.split("`")[1]
+                        if "-" in tool_part:
+                            kb_base = tool_part.split("-")[0].lower()
+                            KNOWN_KB_COMPONENTS = {"milvus", "chroma", "qdrant", "pinecone", "vectorstore"}
+                            
+                            if kb_base in KNOWN_KB_COMPONENTS:
+                                print(f"[TokenRegistry] Detected KB tool invocation: {tool_part} for flow {flow_id}")
+                                # Record this KB invocation for this flow
+                                if flow_id not in cls._kb_tools_invoked:
+                                    cls._kb_tools_invoked[flow_id] = []
+                                cls._kb_tools_invoked[flow_id].append(kb_base)
+                    except Exception as e:
+                        print(f"[TokenRegistry] Error parsing tool invocation: {e}")
+            
+            # Check recent logs for KB tool invocations
+            if flow_id in cls._kb_tools_invoked:
+                print(f"[TokenRegistry] KB tools already detected for flow {flow_id}: {cls._kb_tools_invoked[flow_id]}")
     
     @classmethod
     def get_flow_context(cls):
@@ -45,16 +81,69 @@ class TokenUsageRegistry:
         """Clear the current flow context."""
         cls.get_instance()._flow_context = {}
     
-    def record_usage(self, model, prompt_tokens, completion_tokens, total_tokens):
-        """Record token usage from an API call and send to CreditService."""
-        import datetime
-        from langflow.services.credit.service import TokenUsage
+    @classmethod
+    def register_kb_tool_invocation(cls, flow_id, kb_name):
+        """Explicitly register a KB tool invocation."""
+        instance = cls.get_instance()
+        if flow_id not in instance._kb_tools_invoked:
+            instance._kb_tools_invoked[flow_id] = []
+        if kb_name not in instance._kb_tools_invoked[flow_id]:
+            instance._kb_tools_invoked[flow_id].append(kb_name)
+            print(f"[TokenRegistry] Registered KB tool invocation: {kb_name} for flow {flow_id}")
+    
+    @classmethod
+    def reset_kb_tracking(cls, flow_id):
+        """Reset KB tracking for a specific flow ID."""
+        instance = cls.get_instance()
+        if flow_id in instance._kb_tools_invoked:
+            instance._kb_tools_invoked.pop(flow_id)
+            print(f"[TokenRegistry] Reset KB tracking for flow: {flow_id}")
+    
+    @classmethod
+    def summarize_flow_usage(cls, flow_id):
+        """Get a summary of token usage for a specific flow."""
+        instance = cls.get_instance()
+        if flow_id not in instance._flow_tracking:
+            return None
         
+        return instance._flow_tracking[flow_id]
+    
+    def _update_flow_tracking(self, flow_id, model, prompt_tokens, completion_tokens, total_tokens):
+        """Update cumulative token tracking for a flow."""
+        if not flow_id:
+            return  # Skip if no flow_id
+            
+        if flow_id not in self._flow_tracking:
+            self._flow_tracking[flow_id] = {
+                "llm_calls": 0,
+                "models": set(),
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+                "components": set()
+            }
+        
+        # Update tracking
+        self._flow_tracking[flow_id]["llm_calls"] += 1
+        self._flow_tracking[flow_id]["models"].add(model)
+        self._flow_tracking[flow_id]["prompt_tokens"] += prompt_tokens
+        self._flow_tracking[flow_id]["completion_tokens"] += completion_tokens
+        self._flow_tracking[flow_id]["total_tokens"] += total_tokens
+        
+        component_id = self._flow_context.get("component_id")
+        if component_id:
+            self._flow_tracking[flow_id]["components"].add(component_id)
+    
+    def record_usage(self, model, prompt_tokens, completion_tokens, total_tokens):
+        """Record token usage from an API call and log it to CreditService."""
+        import datetime
+
         # Get current flow context
         flow_context = self._flow_context
         flow_id = flow_context.get("flow_id")
         component_id = flow_context.get("component_id")
-        
+
+        # We still store the raw log entry locally if needed
         usage_entry = {
             "timestamp": datetime.datetime.now().isoformat(),
             "model": model,
@@ -65,45 +154,165 @@ class TokenUsageRegistry:
             "component_id": component_id
         }
         self._usage_log.append(usage_entry)
-        
-        # Log using the existing CreditService
+
+        # Update cumulative tracking per flow (can keep this for flow summary)
+        self._update_flow_tracking(flow_id, model, prompt_tokens, completion_tokens, total_tokens)
+
+        # Log token usage using the CreditService
         try:
-            from langflow.services.manager import service_manager
-            from langflow.services.schema import ServiceType
-            
-            # Create TokenUsage object for CreditService
-            token_usage = TokenUsage(
-                model_name=model,
-                input_tokens=prompt_tokens,
-                output_tokens=completion_tokens
-            )
-            
-            # Get the credit service from the service manager
             credit_service = service_manager.get(ServiceType.CREDIT_SERVICE)
             if credit_service:
-                # Generate a unique run_id using flow_id and component_id
+                # Create TokenUsage object
+                token_usage_data = TokenUsage(
+                    model_name=model,
+                    input_tokens=prompt_tokens,
+                    output_tokens=completion_tokens
+                )
+
+                # Generate a unique run_id - HOW? Needs context.
+                # This is a problem. The HTTPX patch doesn't know the overall 'run_id'.
+                # We might need to pass the run_id via flow_context as well.
+                # For now, let's use flow_id + component_id + timestamp as a temporary proxy,
+                # but this needs alignment with the run_id used by callbacks.
+                # --- START TEMPORARY RUN ID ---
                 run_id = f"{flow_id}_{component_id}_{datetime.datetime.now().timestamp()}"
-                # Track the run with token usage
-                credit_service.track_run(run_id=run_id, token_usage=token_usage)
-            else:
-                # Fallback to simple print if service not available
-                cost_per_1k_input = 0.01  # Default cost per 1K tokens
-                cost_per_1k_output = 0.03  # Default cost per 1K tokens
-                input_cost = (prompt_tokens / 1000) * cost_per_1k_input
-                output_cost = (completion_tokens / 1000) * cost_per_1k_output
-                total_cost = input_cost + output_cost
+                # Store the base flow_id for KB usage logging
+                base_run_id = flow_id
+                if not flow_id or not component_id:
+                    print("Cannot determine run_id for token logging due to missing flow/component context.")
+                    # Decide fallback: maybe log globally without run_id, or skip? Skipping for now.
+                    return
+                # --- END TEMPORARY RUN ID ---
+
+                # Log token usage to the service
+                credit_service.log_token_usage(
+                    run_id=run_id, # Pass the determined run_id
+                    token_usage=token_usage_data,
+                )
                 
-                print(f"\n[LLM Cost] Flow: {flow_id or 'unknown'}")
-                print(f"[LLM Cost] Component: {component_id or 'unknown'}")
-                print(f"[LLM Cost] Model: {model}")
-                print(f"[LLM Cost] Prompt tokens: {prompt_tokens} (${input_cost:.6f})")
-                print(f"[LLM Cost] Completion tokens: {completion_tokens} (${output_cost:.6f})")
-                print(f"[LLM Cost] Total cost: ${total_cost:.6f}\n")
+                # IMPORTANT: Also log to the base flow_id to ensure it gets consolidated properly
+                if base_run_id and base_run_id != run_id:
+                    credit_service.log_token_usage(
+                        run_id=base_run_id,
+                        token_usage=token_usage_data,
+                    )
+                    print(f"[TokenRegistry] Also logged token usage to base run_id: {base_run_id}")
+
+                # Add back KB detection logic
+                if component_id:
+                    # Check if this is a KB component (case-insensitive)
+                    component_base_name = component_id.split('-')[0].lower()
+                    kb_method_pattern = r'([a-zA-Z]+)-search_documents'
+                    KNOWN_KB_COMPONENTS = {"milvus", "chroma", "qdrant", "pinecone", "vectorstore"}
+                    
+                    # Direct KB component detection
+                    if component_base_name in KNOWN_KB_COMPONENTS and credit_service:
+                        from langflow.services.credit.service import KBUsage
+                        kb_usage = KBUsage(kb_name=component_base_name, count=1)
+                        # Use the base flow_id for KB tracking
+                        credit_service.log_kb_usage(
+                            run_id=base_run_id, # Use base flow_id for consistency with finalize_run_cost
+                            kb_usage=kb_usage
+                        )
+                        print(f"[TokenRegistry] Logged KB usage for {component_base_name} with run_id {base_run_id}")
+                    
+                    # KB tool invocation detection (e.g., "Milvus-search_documents")
+                    elif "-" in component_id:
+                        # Add more debugging
+                        print(f"[TokenRegistry DEBUG] Checking tool component: {component_id}")
+                        
+                        # Check for search_documents pattern
+                        if "search_documents" in component_id.lower():
+                            # This is likely a KB tool invocation
+                            tool_base_name = component_id.split('-')[0].lower()
+                            print(f"[TokenRegistry DEBUG] Found search_documents pattern, base name: {tool_base_name}")
+                            
+                            if tool_base_name in KNOWN_KB_COMPONENTS:
+                                kb_usage = KBUsage(kb_name=tool_base_name, count=1)
+                                credit_service.log_kb_usage(
+                                    run_id=base_run_id, # Use base flow_id for consistency
+                                    kb_usage=kb_usage
+                                )
+                                print(f"[TokenRegistry] Logged KB tool invocation for {tool_base_name} with run_id {base_run_id}")
+                            else:
+                                print(f"[TokenRegistry DEBUG] Base name {tool_base_name} not in known KB components: {KNOWN_KB_COMPONENTS}")
+                        else:
+                            # Let's also check for other common KB operation patterns
+                            kb_operation_patterns = ["similarity_search", "get_", "query", "retrieve", "search", "vector_search"]
+                            matched_pattern = next((pattern for pattern in kb_operation_patterns if pattern in component_id.lower()), None)
+                            
+                            if matched_pattern:
+                                print(f"[TokenRegistry DEBUG] Found potential KB operation: {matched_pattern} in {component_id}")
+                                # Extract the component name
+                                tool_base_name = component_id.split('-')[0].lower()
+                                if tool_base_name in KNOWN_KB_COMPONENTS:
+                                    kb_usage = KBUsage(kb_name=tool_base_name, count=1)
+                                    credit_service.log_kb_usage(
+                                        run_id=base_run_id,
+                                        kb_usage=kb_usage
+                                    )
+                                    print(f"[TokenRegistry] Logged KB tool invocation (alt pattern) for {tool_base_name} with run_id {base_run_id}")
+                    
+                    # Check if any KB tools were previously detected for this flow
+                    if flow_id in self._kb_tools_invoked and self._kb_tools_invoked[flow_id]:
+                        # If the component is the agent making LLM calls (usually after tool usage)
+                        if "agent" in component_id.lower():
+                            for kb_name in self._kb_tools_invoked[flow_id]:
+                                kb_usage = KBUsage(kb_name=kb_name, count=1)
+                                credit_service.log_kb_usage(
+                                    run_id=base_run_id,
+                                    kb_usage=kb_usage
+                                )
+                                print(f"[TokenRegistry] Logged previously detected KB usage for {kb_name} with run_id {base_run_id}")
+                            # Clear the list after logging
+                            self._kb_tools_invoked[flow_id] = []
+
+            else:
+                # Fallback logging if CreditService isn't available
+                # This can remain as simple print statements
+                cost_per_1k_input = 0.01
+                cost_per_1k_output = 0.03
+                input_cost = (prompt_tokens / 1000) * cost_per_1k_input
+                completion_cost = (completion_tokens / 1000) * cost_per_1k_output
+                total_cost = input_cost + completion_cost
+                print(f"[Fallback LLM Cost] Flow: {flow_id or 'unknown'}, Comp: {component_id or 'unknown'}, Model: {model}")
+                print(f"[Fallback LLM Cost] Tokens: P={prompt_tokens}(${input_cost:.6f}) C={completion_tokens}(${completion_cost:.6f}) Total Cost: ${total_cost:.6f}")
+
         except Exception as e:
-            print(f"[Token Tracking] Error connecting to CreditService: {e}")
-            # Just log basic info if we hit an error
-            print(f"[Token Usage] Model: {model}, Input: {prompt_tokens}, Output: {completion_tokens}")
+            logger.error(f"[Token Tracking] Error logging token usage to CreditService: {e}")
+            # Log basic info if we hit an error
+            print(f"[Token Usage Fallback] Model: {model}, Input: {prompt_tokens}, Output: {completion_tokens}")
+    
+    def print_flow_summary(self, flow_id):
+        """Print a summary of token usage for a flow."""
+        if flow_id not in self._flow_tracking:
+            print(f"[Flow Summary] No data available for flow {flow_id}")
+            return
         
+        data = self._flow_tracking[flow_id]
+        total_prompt_tokens = data["prompt_tokens"]
+        total_completion_tokens = data["completion_tokens"]
+        total_tokens = data["total_tokens"]
+        
+        # Calculate cost (simplified version)
+        # In production, would use model-specific costs from CreditService
+        avg_prompt_cost = 0.01  # Average cost per 1K tokens
+        avg_completion_cost = 0.03  # Average cost per 1K tokens
+        prompt_cost = (total_prompt_tokens / 1000) * avg_prompt_cost
+        completion_cost = (total_completion_tokens / 1000) * avg_completion_cost
+        total_cost = prompt_cost + completion_cost
+        
+        print("\n" + "="*50)
+        print(f"[FLOW SUMMARY] Flow ID: {flow_id}")
+        print(f"[FLOW SUMMARY] Total LLM calls: {data['llm_calls']}")
+        print(f"[FLOW SUMMARY] Models used: {', '.join(data['models'])}")
+        print(f"[FLOW SUMMARY] Components with LLM calls: {', '.join(data['components'])}")
+        print(f"[FLOW SUMMARY] Total prompt tokens: {total_prompt_tokens} (${prompt_cost:.6f})")
+        print(f"[FLOW SUMMARY] Total completion tokens: {total_completion_tokens} (${completion_cost:.6f})")
+        print(f"[FLOW SUMMARY] Total tokens: {total_tokens}")
+        print(f"[FLOW SUMMARY] Estimated total cost: ${total_cost:.6f}")
+        print("="*50 + "\n")
+    
     def get_all_usage(self):
         """Get all recorded token usage."""
         return self._usage_log

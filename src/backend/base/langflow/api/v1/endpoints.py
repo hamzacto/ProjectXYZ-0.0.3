@@ -125,7 +125,12 @@ async def patched_aiter_bytes(self, *args, **kwargs):
         prompt_tokens = 0
         try:
             if hasattr(self.request, "content") and self.request.content:
-                request_body = json.loads(self.request.content.decode("utf-8", errors="ignore"))
+                content = self.request.content
+                if isinstance(content, bytes):
+                    request_body = json.loads(content.decode("utf-8", errors="ignore"))
+                else:
+                    request_body = json.loads(str(content))
+                
                 model = request_body.get("model", "unknown")
                 # Get the encoding for this model
                 import tiktoken
@@ -136,7 +141,11 @@ async def patched_aiter_bytes(self, *args, **kwargs):
                     # Count input tokens accurately using tiktoken
                     for message in request_body.get("messages", []):
                         if isinstance(message, dict) and "content" in message:
-                            prompt_tokens += len(encoding.encode(message["content"]))
+                            content = message.get("content", "")
+                            # Handle non-string content (like lists, etc.)
+                            if not isinstance(content, str):
+                                content = str(content)
+                            prompt_tokens += len(encoding.encode(content))
                 except Exception as e:
                     print(f"[HTTPX Intercept] Error counting input tokens: {e}")
         except Exception as e:

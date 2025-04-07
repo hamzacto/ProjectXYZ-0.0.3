@@ -21,6 +21,7 @@ from langflow.schema.content_block import ContentBlock
 from langflow.schema.message import Message
 from langflow.template import Output
 from langflow.utils.constants import MESSAGE_SENDER_AI
+from langflow.callbacks.cost_tracking import AgentCostTrackingCallbackHandler
 
 if TYPE_CHECKING:
     from langchain_core.messages import BaseMessage
@@ -216,10 +217,41 @@ class LCToolsAgentComponent(LCAgentComponent):
     def build_agent(self) -> AgentExecutor:
         self.validate_tool_names()
         agent = self.create_agent_runnable()
+
+        # Get run_id for cost tracking
+        run_id = None
+        if hasattr(self, "graph") and self.graph and hasattr(self.graph, "session_id"):
+            run_id = self.graph.session_id
+        else:
+            logger.warning("[Build Agent] Could not determine run_id (graph.session_id). Cost tracking callback might fail.")
+            # Generate a temporary ID as fallback
+            import uuid
+            run_id = str(uuid.uuid4())
+            logger.info(f"[Build Agent] Using fallback run_id: {run_id}")
+
+        # Instantiate the cost tracking callback handler if run_id is available
+        callbacks = self.get_langchain_callbacks() # Get existing callbacks
+        if run_id:
+            try:
+                from langflow.callbacks.cost_tracking import AgentCostTrackingCallbackHandler
+                # Create and add the cost tracking callback
+                cost_callback = AgentCostTrackingCallbackHandler(run_id=run_id)
+                callbacks.append(cost_callback)
+                print(f"[Build Agent] Attached AgentCostTrackingCallbackHandler for run_id: {run_id}")
+                
+            except Exception as e:
+                logger.error(f"[Build Agent] Failed to instantiate AgentCostTrackingCallbackHandler: {e}")
+
+        # Get agent kwargs
+        agent_kwargs = self.get_agent_kwargs(flatten=True)
+
+        # Add the callbacks to the agent executor kwargs
+        agent_kwargs["callbacks"] = callbacks
+
         return AgentExecutor.from_agent_and_tools(
             agent=RunnableAgent(runnable=agent, input_keys_arg=["input"], return_keys_arg=["output"]),
             tools=self.tools,
-            **self.get_agent_kwargs(flatten=True),
+            **agent_kwargs, # Pass the updated kwargs including callbacks
         )
 
     @abstractmethod

@@ -55,13 +55,17 @@ class CreditCostBreakdown(BaseModel):
     tools_cost: float = 0
     kb_cost: float = 0
     total_cost: float = 0
-    
-    # Raw token usage
-    token_usage: Optional[TokenUsage] = None
-    
-    # Tool and KB usage counts
+    # We store the detailed lists in the finalized breakdown
+    token_usages: List[TokenUsage] = []
     tool_usages: List[ToolUsage] = []
     kb_usages: List[KBUsage] = []
+
+
+# New model to hold pending usage data
+class PendingUsage(BaseModel):
+    tokens: List[TokenUsage] = []
+    tools: List[ToolUsage] = []
+    kbs: List[KBUsage] = []
 
 
 class CreditService(Service):
@@ -70,29 +74,74 @@ class CreditService(Service):
     
     def __init__(self):
         super().__init__()
-        # In-memory storage for tracking costs - in a production system, this would be persisted to a database
-        self.cost_records: Dict[str, CreditCostBreakdown] = {}
+        # Store pending usage data per run_id
+        self.pending_usage: Dict[str, PendingUsage] = {}
+        # Store finalized cost breakdowns per run_id
+        self.finalized_costs: Dict[str, CreditCostBreakdown] = {}
+        # Track already logged KBs to prevent double-counting
+        self._logged_kbs: Dict[str, set] = {}
         
-    def calculate_llm_cost(self, token_usage: TokenUsage) -> float:
-        """Calculate LLM cost in credits based on token usage and model"""
+    def _get_or_create_pending(self, run_id: str) -> PendingUsage:
+        if run_id not in self.pending_usage:
+            print(f"Creating new pending usage entry for run_id: {run_id}")
+            self.pending_usage[run_id] = PendingUsage()
+        return self.pending_usage[run_id]
+
+    def log_token_usage(self, run_id: str, token_usage: TokenUsage):
+        """Logs token usage for a specific run."""
+        if not run_id:
+            print("Cannot log token usage without a run_id.")
+            return
+        pending = self._get_or_create_pending(run_id)
+        pending.tokens.append(token_usage)
+        print(f"Logged token usage for run {run_id}: {token_usage.model_dump_json()}")
+
+    def log_tool_usage(self, run_id: str, tool_usage: ToolUsage):
+        """Logs tool usage for a specific run."""
+        if not run_id:
+            print("Cannot log tool usage without a run_id.")
+            return
+        pending = self._get_or_create_pending(run_id)
+        pending.tools.append(tool_usage)
+        print(f"Logged tool usage for run {run_id}: {tool_usage.model_dump_json()}")
+
+    def log_kb_usage(self, run_id: str, kb_usage: KBUsage):
+        """Logs knowledge base usage for a specific run."""
+        if not run_id:
+            print("Cannot log KB usage without a run_id.")
+            return
+            
+        # Check if this KB has already been logged for this run to prevent double-counting
+        if run_id not in self._logged_kbs:
+            self._logged_kbs[run_id] = set()
+            
+        # If this KB was already logged, don't log it again
+        if kb_usage.kb_name in self._logged_kbs[run_id]:
+            print(f"KB {kb_usage.kb_name} already logged for run {run_id}, skipping to prevent double-counting")
+            return
+            
+        # Add to tracked KBs and proceed with logging
+        self._logged_kbs[run_id].add(kb_usage.kb_name)
+        pending = self._get_or_create_pending(run_id)
+        pending.kbs.append(kb_usage)
+        print(f"Logged KB usage for run {run_id}: {kb_usage.model_dump_json()}")
+
+    def _calculate_single_llm_cost(self, token_usage: TokenUsage) -> float:
+        """Calculate LLM cost in credits for a single token usage entry."""
+        # Renamed original calculate_llm_cost to avoid conflict
         model_name = token_usage.model_name.lower().strip()
-        
-        # Get cost rates per 1K tokens for the model
         model_cost = MODEL_COSTS.get(model_name, DEFAULT_MODEL_COST)
-        
-        # Calculate base costs in USD
         input_cost_usd = (token_usage.input_tokens / 1000) * model_cost["input"]
         output_cost_usd = (token_usage.output_tokens / 1000) * model_cost["output"]
         total_cost_usd = input_cost_usd + output_cost_usd
-        
-        # Apply markup
         marked_up_cost_usd = total_cost_usd * (1 + LLM_MARKUP_PERCENTAGE)
-        
-        # Convert to credits
         credit_cost = marked_up_cost_usd / CREDIT_TO_USD_RATIO
-        
         return credit_cost
-    
+
+    def calculate_total_llm_cost(self, token_usages: List[TokenUsage]) -> float:
+        """Calculate the total LLM cost for a list of token usage entries."""
+        return sum(self._calculate_single_llm_cost(usage) for usage in token_usages)
+
     def calculate_tools_cost(self, tool_usages: List[ToolUsage]) -> float:
         """Calculate cost of tool usage in credits"""
         total_tool_accesses = sum(tool.count for tool in tool_usages)
@@ -103,69 +152,71 @@ class CreditService(Service):
         total_kb_accesses = sum(kb.count for kb in kb_usages)
         return total_kb_accesses * KB_ACCESS_CREDITS
     
-    def track_run(
-        self, 
-        run_id: str, 
-        token_usage: Optional[TokenUsage] = None,
-        tool_usages: Optional[List[ToolUsage]] = None,
-        kb_usages: Optional[List[KBUsage]] = None
-    ) -> CreditCostBreakdown:
-        """Track and calculate the cost of an AI agent run"""
-        # Initialize with defaults if not provided
-        token_usage = token_usage or TokenUsage(model_name="default")
-        tool_usages = tool_usages or []
-        kb_usages = kb_usages or []
-        
-        # Calculate individual costs
-        llm_cost = self.calculate_llm_cost(token_usage) if token_usage else 0
-        tools_cost = self.calculate_tools_cost(tool_usages)
-        kb_cost = self.calculate_kb_cost(kb_usages)
-        
+    def finalize_run_cost(self, run_id: str) -> Optional[CreditCostBreakdown]:
+        """Calculate and finalize the total cost for a completed run."""
+        if run_id not in self.pending_usage:
+            print(f"No pending usage data found for run_id {run_id} to finalize.")
+            # Check if already finalized
+            if run_id in self.finalized_costs:
+                print(f"Cost for run_id {run_id} was already finalized.")
+                return self.finalized_costs[run_id]
+            return None
+
+        pending = self.pending_usage.pop(run_id) # Remove from pending
+
+        # Calculate individual costs from the logged lists
+        total_llm_cost = self.calculate_total_llm_cost(pending.tokens)
+        tools_cost = self.calculate_tools_cost(pending.tools)
+        kb_cost = self.calculate_kb_cost(pending.kbs)
+
         # Calculate total cost
-        total_cost = FIXED_COST_CREDITS + llm_cost + tools_cost + kb_cost
-        
-        # Create cost breakdown
+        total_cost = FIXED_COST_CREDITS + total_llm_cost + tools_cost + kb_cost
+
+        # Create final cost breakdown, storing the detailed usage lists
         cost_breakdown = CreditCostBreakdown(
             fixed_cost=FIXED_COST_CREDITS,
-            llm_cost=llm_cost,
+            llm_cost=total_llm_cost,
             tools_cost=tools_cost,
             kb_cost=kb_cost,
             total_cost=total_cost,
-            token_usage=token_usage,
-            tool_usages=tool_usages,
-            kb_usages=kb_usages
+            token_usages=pending.tokens, # Store the list
+            tool_usages=pending.tools,
+            kb_usages=pending.kbs
         )
-        
-        # Store the cost record
-        self.cost_records[run_id] = cost_breakdown
-        
-        # Log the cost breakdown
-        print(f"Credit usage for run {run_id}: {total_cost:.2f} credits (${total_cost * CREDIT_TO_USD_RATIO:.6f})")
-        print(f"Breakdown: Fixed={FIXED_COST_CREDITS} | LLM={llm_cost:.2f} | Tools={tools_cost:.2f} | KB={kb_cost:.2f}")
-        
-        # Log the details with loguru
-        print(f"Credit usage for run {run_id}: {total_cost:.2f} credits (${total_cost * CREDIT_TO_USD_RATIO:.6f})")
-        print(f"Credit breakdown: Fixed={FIXED_COST_CREDITS} | LLM={llm_cost:.2f} | Tools={tools_cost:.2f} | KB={kb_cost:.2f}")
-        
-        # Log token usage details if available
-        if token_usage and (token_usage.input_tokens > 0 or token_usage.output_tokens > 0):
-            print(f"Token usage: Model={token_usage.model_name} | Input={token_usage.input_tokens} | Output={token_usage.output_tokens}")
-        
-        # Log tool usage details if available
-        if tool_usages:
-            tools_str = ", ".join([f"{tool.tool_name}({tool.count})" for tool in tool_usages])
-            print(f"Tool usage: {tools_str}")
-            
-        # Log KB usage details if available
-        if kb_usages:
-            kb_str = ", ".join([f"{kb.kb_name}({kb.count})" for kb in kb_usages])
-            print(f"KB usage: {kb_str}")
-        
+
+        # Store the finalized cost record
+        self.finalized_costs[run_id] = cost_breakdown
+
+        # Log the final cost breakdown summary
+        print(f"Finalized credit usage for run {run_id}: {total_cost:.2f} credits (${total_cost * CREDIT_TO_USD_RATIO:.6f})")
+        print(f"  Breakdown: Fixed={FIXED_COST_CREDITS:.2f} | LLM={total_llm_cost:.2f} | Tools={tools_cost:.2f} | KB={kb_cost:.2f}")
+
+        # Log detailed usage
+        if pending.tokens:
+            models_used = list(set(t.model_name for t in pending.tokens))
+            total_input = sum(t.input_tokens for t in pending.tokens)
+            total_output = sum(t.output_tokens for t in pending.tokens)
+            print(f"  Token Usage: Models={models_used}, Input={total_input}, Output={total_output}")
+        if pending.tools:
+            tools_str = ", ".join([f"{tool.tool_name}({tool.count})" for tool in pending.tools])
+            print(f"  Tool Usage: {tools_str}")
+        if pending.kbs:
+            kb_str = ", ".join([f"{kb.kb_name}({kb.count})" for kb in pending.kbs])
+            print(f"  KB Usage: {kb_str}")
+
+        # Clear KB tracking for this run_id to prevent skipping in future flow runs
+        if hasattr(self, "_logged_kbs") and run_id in self._logged_kbs:
+            print(f"[KB Tracking] Clearing KB tracking for run_id {run_id} to prepare for future runs")
+            self._logged_kbs.pop(run_id)
+
         return cost_breakdown
-    
+
     def get_cost_breakdown(self, run_id: str) -> Optional[CreditCostBreakdown]:
-        """Get the cost breakdown for a specific run"""
-        return self.cost_records.get(run_id)
+        """Get the finalized cost breakdown for a specific run."""
+        cost = self.finalized_costs.get(run_id)
+        if not cost:
+            print(f"No finalized cost breakdown found for run_id: {run_id}")
+        return cost
     
     def extract_token_usage_from_llm_response(self, response_metadata: dict) -> Optional[TokenUsage]:
         """Extract token usage information from LLM response metadata"""
@@ -194,4 +245,7 @@ class CreditService(Service):
     async def teardown(self) -> None:
         """Clean up resources when service is shut down"""
         # In a real implementation, this would persist any unsaved data
-        print("Tearing down Credit Service") 
+        print("Tearing down Credit Service")
+        # Clear in-memory stores on teardown for clean slate if service restarts
+        self.pending_usage.clear()
+        self.finalized_costs.clear() 
