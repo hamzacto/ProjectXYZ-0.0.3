@@ -2,6 +2,7 @@ from typing import Annotated
 from uuid import UUID
 import re
 from email_validator import validate_email, EmailNotValidError
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy import func
@@ -23,7 +24,9 @@ from langflow.services.deps import get_settings_service
 from langflow.services.email.service import get_email_service
 from jose import JWTError, jwt
 from langflow.services.limiter.service import password_reset_limiter, email_verification_limiter, registration_limiter
-
+from langflow.services.billing.utils import create_default_subscription_plans
+from langflow.services.database.models.billing import SubscriptionPlan
+from loguru import logger
 router = APIRouter(tags=["Users"], prefix="/users")
 
 # Add PasswordResetRequest model
@@ -48,18 +51,29 @@ async def add_user(
         normalized_email = valid_email.normalized
     except EmailNotValidError:
         raise HTTPException(status_code=400, detail="Invalid email format")
-    
-    new_user = User.model_validate(user, from_attributes=True)
-    new_user.email = normalized_email  # Use normalized email
-    
+
     try:
-        new_user.password = get_password_hash(user.password)
-        # Set user to inactive until email verification
-        new_user.is_active = False
-        new_user.is_verified = False
-        # We don't need to set verification_token or verification_token_expiry anymore
-        # since we're using JWT tokens now
-        
+        # Get or create default subscription plans asynchronously
+        plans = await create_default_subscription_plans(session)
+        free_plan = plans.get("free")
+        if not free_plan:
+            raise HTTPException(status_code=500, detail="Default 'free' subscription plan not found.")
+
+        # Prepare user data dictionary including defaults
+        user_data = user.model_dump()
+        user_data["email"] = normalized_email
+        user_data["password"] = get_password_hash(user.password)
+        user_data["is_active"] = False
+        user_data["is_verified"] = False
+        user_data["subscription_plan_id"] = free_plan.id
+        user_data["subscription_status"] = "active"  # Start as active on free plan
+        user_data["subscription_start_date"] = datetime.now(timezone.utc)
+        user_data["credits_balance"] = free_plan.monthly_quota_credits # Assign initial credits from plan
+
+        # Validate the complete user data dictionary
+        new_user = User.model_validate(user_data)
+
+        # Add user to session and commit
         session.add(new_user)
         await session.commit()
         await session.refresh(new_user)
@@ -81,6 +95,10 @@ async def add_user(
             elif "email" in str(e).lower():
                 raise HTTPException(status_code=400, detail="This email is already registered")
         raise HTTPException(status_code=400, detail="Registration failed. Please try again.") from e
+    except Exception as e:
+        await session.rollback()
+        logger.error(f"An unexpected error occurred during user registration: {e}")
+        raise HTTPException(status_code=500, detail="An unexpected error occurred during registration.") from e
 
     return new_user
 
@@ -94,7 +112,6 @@ async def verify_email(
 ):
     """Verify a user's email using the token sent via email"""
     from loguru import logger
-    from datetime import datetime, timezone
     
     logger.info(f"Attempting to verify email with token: {token[:10]}...")
     
@@ -220,7 +237,6 @@ async def reset_password(
 ):
     """Reset a user's password using the token sent via email"""
     from loguru import logger
-    from datetime import datetime, timezone
     from jose import JWTError, jwt
     from langflow.services.deps import get_settings_service
     from langflow.services.auth.utils import get_password_hash

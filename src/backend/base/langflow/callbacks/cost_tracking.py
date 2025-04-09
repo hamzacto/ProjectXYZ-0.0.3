@@ -3,6 +3,7 @@ from uuid import UUID
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.outputs import LLMResult
 from langchain_core.agents import AgentAction, AgentFinish
+import asyncio
 
 from langflow.services.manager import service_manager
 from langflow.services.schema import ServiceType
@@ -13,11 +14,19 @@ from loguru import logger
 # These should match the 'name' attribute of the VectorStore components
 KNOWN_KB_COMPONENTS = {"milvus", "chroma", "qdrant", "pinecone", "vectorstore"} # Add more as needed
 
+# Define premium tools with their credit costs
+PREMIUM_TOOLS = {
+    "alpha_vantage": 5,  # 5 credits per use
+    "google_search": 2,  # 2 credits per use
+    # Add other premium tools here
+}
+
 # Global interceptor for tool invocations
 # This is a class-level tracking mechanism to ensure we don't miss KB tool invocations
 class ToolInvocationTracker:
     """Tracks tool invocations for credit calculation."""
-    # Static dictionary to track KB tool invocations by run_id
+    # Static dictionary to track KB tool invocations by run_id - deprecated
+    # We'll use TokenUsageRegistry instead
     _kb_invocations = {}  # Format: {run_id: [kb_names]}
     
     @classmethod
@@ -34,36 +43,52 @@ class ToolInvocationTracker:
                 break
                 
         if kb_base:
-            # It's a KB tool, register it
-            if run_id not in cls._kb_invocations:
-                cls._kb_invocations[run_id] = []
-            
-            if kb_base not in cls._kb_invocations[run_id]:
-                cls._kb_invocations[run_id].append(kb_base)
+            # It's a KB tool, register it using TokenUsageRegistry
+            try:
+                from langflow.utils.validate import TokenUsageRegistry
+                # Use static methods directly
+                TokenUsageRegistry.set_flow_context(flow_id=run_id)
+                TokenUsageRegistry.track_kb_tool_invocation(kb_name=kb_base)
                 print(f"[ToolTracker] Registered KB invocation: {kb_base} for run_id {run_id}")
                 
-                # Also try to log directly
-                try:
-                    credit_service = service_manager.get(ServiceType.CREDIT_SERVICE)
-                    if credit_service:
-                        # Log to the run_id directly
-                        kb_usage = KBUsage(kb_name=kb_base, count=1)
-                        credit_service.log_kb_usage(run_id=run_id, kb_usage=kb_usage)
-                        
-                        # Also log to base run_id if different
-                        base_run_id = run_id.split('_')[0] if '_' in run_id else run_id
-                        if base_run_id != run_id:
-                            credit_service.log_kb_usage(run_id=base_run_id, kb_usage=kb_usage)
-                            print(f"[ToolTracker] Also logged to base run_id: {base_run_id}")
-                except Exception as e:
-                    print(f"[ToolTracker] Error logging KB usage: {e}")
+                # Also add to internal tracking to preserve any existing code that depends on it
+                if run_id not in cls._kb_invocations:
+                    cls._kb_invocations[run_id] = []
+                
+                if kb_base not in cls._kb_invocations[run_id]:
+                    cls._kb_invocations[run_id].append(kb_base)
+                
+            except Exception as e:
+                print(f"[ToolTracker] Error registering KB usage with TokenUsageRegistry: {e}")
+        
+        # Check if it's a premium tool
+        elif tool_name in PREMIUM_TOOLS:
+            tool_usage = ToolUsage(tool_name=tool_name, count=1)
+            # Log to Credit Service ONLY
+            try:
+                credit_service = service_manager.get(ServiceType.CREDIT_SERVICE)
+                if credit_service:
+                    credit_service.log_tool_usage(run_id, tool_usage)
+                    print(f"[ToolTracker] Registered premium tool usage with CreditService: {tool_name} for run_id {run_id}")
+            except Exception as e:
+                print(f"[ToolTracker] Error registering premium tool usage with CreditService: {e}")
+                
+            # Removed the attempt to log to Billing Service from here
 
     @classmethod
     def reset_tracking(cls, run_id: str):
         """Reset tracking for a flow run."""
+        # Clear internal tracking
         if run_id in cls._kb_invocations:
             cls._kb_invocations.pop(run_id)
             print(f"[ToolTracker] Reset KB tracking for flow: {run_id}")
+        
+        # Also reset in TokenUsageRegistry
+        try:
+            from langflow.utils.validate import TokenUsageRegistry
+            TokenUsageRegistry.reset_kb_tracking(run_id)
+        except Exception as e:
+            print(f"[ToolTracker] Error resetting KB tracking in registry: {e}")
 
 class AgentCostTrackingCallbackHandler(BaseCallbackHandler):
     """Callback handler to track tool and KB usage during agent execution."""
@@ -76,6 +101,7 @@ class AgentCostTrackingCallbackHandler(BaseCallbackHandler):
             raise ValueError("run_id must be provided for cost tracking.")
         self.run_id = run_id
         self._credit_service = None # Lazily load service
+        self._billing_service = None # Lazily load service
 
     @property
     def credit_service(self) -> Optional[CreditService]:
@@ -90,18 +116,23 @@ class AgentCostTrackingCallbackHandler(BaseCallbackHandler):
                 logger.error(f"[CostCallback] Failed to get CreditService: {e}. Cost tracking will be skipped.")
                 self._credit_service = None # Ensure it's None on error
         return self._credit_service
-
+        
+    @property
+    def billing_service(self):
+        """Lazy load billing service."""
+        if self._billing_service is None:
+            try:
+                service = service_manager.get(ServiceType.BILLING_SERVICE)
+                self._billing_service = service
+            except Exception as e:
+                logger.error(f"[CostCallback] Failed to get BillingService: {e}")
+                self._billing_service = None
+        return self._billing_service
 
     def on_tool_start(
         self, serialized: Dict[str, Any], input_str: str, **kwargs: Any
     ) -> Any:
         """Run when tool starts running."""
-        # Check if service is available on each call
-        credit_service = self.credit_service
-        if not credit_service:
-            logger.debug("[CostCallback] Skipping tool start logging - CreditService unavailable.")
-            return
-
         # Add detailed debugging to see what's coming in
         print(f"[CostCallback] TOOL START RECEIVED: {serialized}")
         print(f"[CostCallback] INPUT STRING: {repr(input_str)}")
@@ -121,6 +152,21 @@ class AgentCostTrackingCallbackHandler(BaseCallbackHandler):
 
         print(f"[CostCallback] Tool invoked: '{tool_name}', Base='{component_base_name}', RunID='{self.run_id}'")
         logger.debug(f"[CostCallback] Tool Start: Name='{tool_name}', Base='{component_base_name}', RunID='{self.run_id}'")
+
+        # Check for premium tools
+        if tool_name in PREMIUM_TOOLS:
+            credit_service = self.credit_service
+            if credit_service:
+                tool_usage = ToolUsage(tool_name=tool_name, count=1)
+                credit_service.log_tool_usage(self.run_id, tool_usage)
+                print(f"[CostCallback] Logged Premium Tool Usage: {tool_name} (Cost: {PREMIUM_TOOLS[tool_name]} credits)")
+                
+            # Also log to billing service - REMOVED
+            # billing_service = self.billing_service
+            # if billing_service:
+            #     tool_usage = ToolUsage(tool_name=tool_name, count=1)
+            #     asyncio.create_task(billing_service.log_tool_usage(self.run_id, tool_usage))
+            #     print(f"[CostCallback] Scheduled Premium Tool Usage logging to BillingService: {tool_name}")
 
         # Detection of KB tools
         KNOWN_KB_COMPONENTS = {"milvus", "chroma", "qdrant", "pinecone", "vectorstore"}
@@ -158,27 +204,29 @@ class AgentCostTrackingCallbackHandler(BaseCallbackHandler):
 
         try:
             if is_kb_tool and kb_name:
-                # Log as KB usage
-                kb_usage = KBUsage(kb_name=kb_name, count=1)
-                credit_service.log_kb_usage(self.run_id, kb_usage)
+                # Log KB usage via TokenUsageRegistry
+                from langflow.utils.validate import TokenUsageRegistry
+                TokenUsageRegistry.set_flow_context(flow_id=self.run_id)
+                TokenUsageRegistry.track_kb_tool_invocation(kb_name=kb_name)
                 print(f"[CostCallback] ✅ Detected KB usage: {kb_name} for run_id: {self.run_id}")
                 logger.info(f"[CostCallback] Logged KB Usage for Run {self.run_id}: {kb_name}")
                 
-                # Also log directly to the base run_id if different
-                try:
-                    base_run_id = self.run_id.split('_')[0] if '_' in self.run_id else self.run_id
-                    if base_run_id != self.run_id:
-                        kb_usage = KBUsage(kb_name=kb_name, count=1)
-                        credit_service.log_kb_usage(base_run_id, kb_usage)
-                        print(f"[CostCallback] Also logged KB usage to base run_id: {base_run_id}")
-                except Exception as e:
-                    print(f"[CostCallback] Error in additional KB logging: {e}")
+                # Also log directly to billing service
+                billing_service = self.billing_service
+                if billing_service:
+                    kb_usage = KBUsage(kb_name=kb_name, count=1)
+                    billing_service.log_kb_usage(self.run_id, kb_usage)
+                    print(f"[CostCallback] Logged KB Usage in BillingService: {kb_name}")
             else:
-                # Log as generic tool usage
-                tool_usage = ToolUsage(tool_name=component_base_name, count=1)
-                credit_service.log_tool_usage(self.run_id, tool_usage)
-                print(f"[CostCallback] Logged Tool Usage: {component_base_name}")
-                logger.info(f"[CostCallback] Logged Tool Usage for Run {self.run_id}: {component_base_name}")
+                # For non-KB tools, still track with CreditService directly
+                credit_service = self.credit_service
+                if credit_service:
+                    tool_usage = ToolUsage(tool_name=component_base_name, count=1)
+                    credit_service.log_tool_usage(self.run_id, tool_usage)
+                    print(f"[CostCallback] Logged Tool Usage with CreditService: {component_base_name}")
+                    logger.info(f"[CostCallback] Logged Tool Usage with CreditService for Run {self.run_id}: {component_base_name}")
+                    
+                # Removed tracking with BillingService from here
         except Exception as e:
             logger.exception(f"[CostCallback] Error logging tool/KB usage for run {self.run_id}: {e}")
             print(f"[CostCallback] Error logging tool/KB usage for run {self.run_id}: {e}")

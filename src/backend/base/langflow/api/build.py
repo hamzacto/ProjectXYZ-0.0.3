@@ -57,7 +57,7 @@ def kb_tracking_print_interceptor(*args, **kwargs):
     # Only process when interception is active
     if _interception_active and _current_flow_id:
         # Check if this is a tool invocation message
-        if args and isinstance(args[0], str) and args[0].startswith("Inrvoking: `"):
+        if args and isinstance(args[0], str) and args[0].startswith("Invoking: `"):
             try:
                 # Format typically: Invoking: `Milvus-search_documents` with `{...}`
                 tool_part = args[0].split("`")[1]
@@ -79,29 +79,17 @@ def kb_tracking_print_interceptor(*args, **kwargs):
                         is_kb_tool = True
                         
                     if is_kb_tool:
-                        # Get the credit service and log KB usage
-                        from langflow.services.manager import service_manager
-                        from langflow.services.schema import ServiceType
-                        from langflow.services.credit.service import KBUsage
-                        
-                        credit_service = service_manager.get(ServiceType.CREDIT_SERVICE)
-                        if credit_service:
-                            # Directly log the KB usage with the flow ID
-                            kb_usage = KBUsage(kb_name=kb_base, count=1)
-                            # Log to both the complete flow ID and base ID if different
-                            credit_service.log_kb_usage(run_id=_current_flow_id, kb_usage=kb_usage)
-                            original_print(f"[KB Interceptor] ✅ Logged KB usage for {kb_base} with flow_id {_current_flow_id}")
-                            
-                            # Also try with the OpenAIToolsAgent format if this fails
-                            if "-" in _current_flow_id:
-                                # Skip
-                                pass
-                            else:
-                                # Look for the agent format in other logs
-                                for prefix in ["OpenAIToolsAgent", "Agent"]:
-                                    agent_run_id = f"{_current_flow_id}_{prefix}"
-                                    credit_service.log_kb_usage(run_id=agent_run_id, kb_usage=kb_usage)
-                                    original_print(f"[KB Interceptor] Also logged to potential agent ID: {agent_run_id}")
+                        # Use TokenUsageRegistry to track KB usage - single source of truth
+                        try:
+                            from langflow.utils.validate import TokenUsageRegistry
+                            registry = TokenUsageRegistry.get_instance()
+                            # Set flow context (if not already set)
+                            registry.set_flow_context(flow_id=_current_flow_id)
+                            # Track KB tool invocation
+                            registry.track_kb_tool_invocation(kb_name=kb_base)
+                            original_print(f"[KB Interceptor] ✅ Tracked KB usage for {kb_base} with flow_id {_current_flow_id}")
+                        except Exception as e:
+                            original_print(f"[KB Interceptor] Error tracking KB tool via registry: {e}")
             except Exception as e:
                 original_print(f"[KB Interceptor] Error intercepting KB tool: {e}")
 
@@ -242,6 +230,11 @@ async def generate_flow_events(
     try:
         from langflow.services.manager import service_manager
         from langflow.services.schema import ServiceType
+        from langflow.utils.validate import TokenUsageRegistry
+        
+        # Reset all tracking data for this flow before starting a new run
+        # This ensures each run has isolated metrics
+        TokenUsageRegistry.reset_flow_tracking(_current_flow_id)
         
         credit_service = service_manager.get(ServiceType.CREDIT_SERVICE)
         if credit_service and hasattr(credit_service, "_logged_kbs"):
@@ -254,12 +247,53 @@ async def generate_flow_events(
         from langflow.callbacks.cost_tracking import ToolInvocationTracker
         ToolInvocationTracker.reset_tracking(_current_flow_id)
         
-        # Reset in the TokenUsageRegistry
-        from langflow.utils.validate import TokenUsageRegistry
+        # Reset in the TokenUsageRegistry 
         TokenUsageRegistry.reset_kb_tracking(_current_flow_id)
         
+        # Create a usage record in BillingService
+        billing_service = service_manager.get(ServiceType.BILLING_SERVICE)
+        if billing_service and current_user and current_user.id:
+            billing_service.set_user_context(current_user.id)
+            session_id = inputs.session if inputs and hasattr(inputs, "session") else _current_flow_id
+            usage_record = await billing_service.log_flow_run(
+                flow_id=flow_id,
+                session_id=session_id,
+                user_id=current_user.id
+            )
+            if usage_record:
+                original_print(f"[Billing] Created usage record for flow run: {session_id}")
+                
+                # IMPORTANT: Establish UUID to Session ID mapping immediately
+                # This ensures token usage logging has access to the mapping from the start
+                # Add to both BillingService and TokenUsageRegistry
+                flow_id_str = str(flow_id)
+                
+                # 1. Store in BillingService mappings
+                if hasattr(billing_service, "_uuid_to_session_mappings"):
+                    billing_service._uuid_to_session_mappings[flow_id_str] = session_id
+                    original_print(f"[Billing] Established early mapping: {flow_id_str} -> {session_id}")
+                    
+                    # Also add session prefix mapping for more robust lookups
+                    if hasattr(billing_service, "_session_prefix_mappings") and session_id.startswith("Session "):
+                        try:
+                            day_prefix = session_id.split(",")[0]
+                            if day_prefix and len(day_prefix) > 10:  # Reasonable min length for "Session Apr 08"
+                                billing_service._session_prefix_mappings[day_prefix] = session_id
+                                original_print(f"[Billing] Added early session prefix mapping: {day_prefix} -> {session_id}")
+                        except Exception as e_prefix:
+                            original_print(f"[Billing] Error adding prefix mapping: {e_prefix}")
+                
+                # 2. Also sync with TokenUsageRegistry to have consistent mappings
+                registry = TokenUsageRegistry.get_instance()
+                registry.sync_flow_ids(flow_id_str, session_id)
+            else:
+                original_print(f"[Billing] WARNING: Failed to create usage record for flow run {session_id}")
+                
+        # Also reset tracking in the TokenUsageRegistry 
+        # TokenUsageRegistry.reset_kb_tracking(_current_flow_id) # This seems redundant or misplaced, commenting out
+        
     except Exception as e:
-        logger.error(f"Error resetting KB tracking: {e}")
+        logger.error(f"Error during billing setup or KB tracking reset: {e}") # Adjusted error message
 
     
     try:
@@ -550,38 +584,6 @@ async def generate_flow_events(
         except Exception as e:
             logger.error(f"Error printing flow summary: {e}")
 
-        # Capture token usage from flow summary and ensure it's included in the credit service
-        # This is a final safety check in case tokens were tracked in registry but not in credit service
-        try:
-            from langflow.services.credit.service import TokenUsage
-            from langflow.services.manager import service_manager
-            from langflow.services.schema import ServiceType
-            
-            flow_summary = registry.summarize_flow_usage(flow_id_str)
-            if flow_summary and flow_summary.get("total_tokens", 0) > 0:
-                credit_service = service_manager.get(ServiceType.CREDIT_SERVICE)
-                if credit_service:
-                    # Check if token usage was already recorded
-                    already_recorded = False
-                    if flow_id_str in credit_service.pending_usage:
-                        already_recorded = len(credit_service.pending_usage[flow_id_str].tokens) > 0
-                    elif flow_id_str in credit_service.finalized_costs:
-                        already_recorded = len(credit_service.finalized_costs[flow_id_str].token_usages) > 0
-                        
-                    # If not already recorded, add it
-                    if not already_recorded and flow_summary["models"]:
-                        model_name = next(iter(flow_summary["models"]))
-                        token_usage = TokenUsage(
-                            model_name=model_name,
-                            input_tokens=flow_summary["prompt_tokens"],
-                            output_tokens=flow_summary["completion_tokens"]
-                        )
-                        # Log directly to credit service
-                        credit_service.log_token_usage(run_id=flow_id_str, token_usage=token_usage)
-                        print(f"[Final Token Check] Added missing token usage: {flow_summary['prompt_tokens']} input, {flow_summary['completion_tokens']} output tokens")
-        except Exception as e:
-            logger.error(f"Error capturing token usage from flow summary: {e}")
-
         # Finalize cost calculation for this run
         try:
             from langflow.services.manager import service_manager
@@ -590,140 +592,111 @@ async def generate_flow_events(
             
             credit_service = service_manager.get(ServiceType.CREDIT_SERVICE)
             if credit_service and graph and graph.session_id:
-                run_id = graph.session_id # Base run_id
+                # Use a consistent run_id for all tracking
+                run_id = graph.session_id  # Base run_id
+                flow_id_str = str(flow_id)
                 print(f"Finalizing costs for run_id: {run_id}")
                 
-                # Check for any pending KB tool invocations in the registry
-                registry = TokenUsageRegistry.get_instance()
-                if hasattr(registry, "_kb_tools_invoked") and run_id in registry._kb_tools_invoked:
-                    kb_tools = registry._kb_tools_invoked[run_id]
-                    if kb_tools:
-                        from langflow.services.credit.service import KBUsage
-                        print(f"[Final KB Check] Found {len(kb_tools)} KB tool invocations to log: {kb_tools}")
-                        for kb_name in kb_tools:
-                            kb_usage = KBUsage(kb_name=kb_name, count=1)
-                            credit_service.log_kb_usage(run_id=run_id, kb_usage=kb_usage)
-                            print(f"[Final KB Check] Logged final KB usage for {kb_name}")
-                        # Clear the tracked invocations
-                        registry._kb_tools_invoked[run_id] = []
-                
-                # ALSO check the tool invocation tracker
-                try:
-                    from langflow.callbacks.cost_tracking import ToolInvocationTracker
+                # Sync tracking between flow_id and session_id if they're different
+                if flow_id_str != run_id:
+                    print(f"[ID Sync] Flow ID {flow_id_str} differs from session ID {run_id}, synchronizing...")
                     
-                    if hasattr(ToolInvocationTracker, "_kb_invocations"):
-                        if run_id in ToolInvocationTracker._kb_invocations:
-                            kb_tools = ToolInvocationTracker._kb_invocations[run_id]
-                            if kb_tools:
-                                from langflow.services.credit.service import KBUsage
-                                print(f"[Final KB Check] Found {len(kb_tools)} KB tool invocations in ToolTracker: {kb_tools}")
-                                for kb_name in kb_tools:
-                                    kb_usage = KBUsage(kb_name=kb_name, count=1)
-                                    credit_service.log_kb_usage(run_id=run_id, kb_usage=kb_usage)
-                                    print(f"[Final KB Check] Logged final KB usage from ToolTracker for {kb_name}")
-                                # Clear the tracked invocations
-                                ToolInvocationTracker._kb_invocations[run_id] = []
-                except Exception as e:
-                    print(f"[Final KB Check] Error checking ToolTracker: {e}")
-                
-                # First try with the simple run_id
-                result = credit_service.finalize_run_cost(run_id=run_id)
-                
-                # If no data found, look for any pending usage with this run_id as a prefix
-                if not result and hasattr(credit_service, "pending_usage"):
-                    # Check for token usage in the registry that might not have been captured
+                    # First sync in TokenUsageRegistry (internal tracking)
                     registry = TokenUsageRegistry.get_instance()
-                    if hasattr(registry, "_flow_tracking") and run_id in registry._flow_tracking:
-                        flow_usage = registry._flow_tracking[run_id]
-                        # If we have token usage in the registry but not in credit service, log it
-                        print(f"[Token Check] Found token usage in registry for {run_id}: {flow_usage['prompt_tokens']} input, {flow_usage['completion_tokens']} output tokens")
-                        
-                        # Check if any token usage exists for this run_id in credit service
-                        has_token_usage = False
-                        for pending_id in credit_service.pending_usage:
-                            if pending_id == run_id or pending_id.startswith(f"{run_id}_"):
-                                if credit_service.pending_usage[pending_id].tokens:
-                                    has_token_usage = True
-                                    break
-                        
-                        # Only log if no token usage exists yet
-                        if not has_token_usage and flow_usage["models"]:
-                            model_name = next(iter(flow_usage["models"]))
-                            from langflow.services.credit.service import TokenUsage
-                            # Log the token usage directly from our registry
-                            token_usage = TokenUsage(
-                                model_name=model_name,
-                                input_tokens=flow_usage["prompt_tokens"],
-                                output_tokens=flow_usage["completion_tokens"]
-                            )
-                            credit_service.log_token_usage(run_id=run_id, token_usage=token_usage)
-                            print(f"[Token Check] Logged token usage from registry to credit service for {run_id}")
+                    registry.sync_flow_ids(flow_id_str, run_id)
                     
-                    # Check for various run_id patterns
-                    patterns_to_check = [
-                        # 1. Base flow ID with components
-                        f"{run_id}_",
-                        # 2. Common agent patterns
-                        f"{run_id}_OpenAIToolsAgent", 
-                        f"{run_id}_Agent",
-                    ]
+                    # Then ensure CreditService has the combined data
+                    if flow_id_str in credit_service.pending_usage:
+                        # Ensure the session_id has a pending usage entry
+                        if run_id not in credit_service.pending_usage:
+                            from langflow.services.credit.service import PendingUsage
+                            credit_service.pending_usage[run_id] = PendingUsage()
+                        
+                        # Copy token usage from flow_id to session_id
+                        flow_pending = credit_service.pending_usage.get(flow_id_str)
+                        if flow_pending:
+                            if flow_pending.tokens:
+                                credit_service.pending_usage[run_id].tokens.extend(flow_pending.tokens)
+                                print(f"[ID Sync] Transferred {len(flow_pending.tokens)} token usage entries")
+                                
+                            if flow_pending.tools:
+                                credit_service.pending_usage[run_id].tools.extend(flow_pending.tools)
+                                print(f"[ID Sync] Transferred {len(flow_pending.tools)} tool usage entries")
+                                
+                            if flow_pending.kbs:
+                                credit_service.pending_usage[run_id].kbs.extend(flow_pending.kbs)
+                                print(f"[ID Sync] Transferred {len(flow_pending.kbs)} KB usage entries")
+                
+                # Simply finalize the run cost with the main run_id
+                # All token and KB usage should already be in CreditService
+                # through the TokenUsageRegistry delegation
+                result = await credit_service.finalize_run_cost(run_id=run_id)
+                
+                # After finalizing, make sure we clean up all tracking data to isolate each run
+                # We've already calculated and displayed the costs, so this data isn't needed anymore
+                TokenUsageRegistry.reset_flow_tracking(run_id)
+                TokenUsageRegistry.reset_flow_tracking(flow_id_str)
+                
+                # Also clear any session-based tracking that might remain
+                if run_id.startswith("Session"):
+                    # Find and clear all Session-based tracking for this timestamp
+                    session_time = run_id.split(" ")[1]  # Extract the timestamp part
+                    for session_id in list(credit_service.pending_usage.keys()):
+                        if isinstance(session_id, str) and session_id.startswith("Session") and session_time in session_id:
+                            if session_id != run_id:  # Skip the one we just finalized
+                                credit_service.pending_usage.pop(session_id, None)
+                                print(f"[Final Cleanup] Removed related session tracking: {session_id}")
+                
+                if not result:
+                    print(f"No usage data found for run_id: {run_id}")
                     
-                    all_partial_matches = []
-                    for pattern in patterns_to_check:
-                        partial_matches = [
-                            pending_id for pending_id in credit_service.pending_usage.keys() 
-                            if pattern in pending_id
+                    # Check for partial matches in run_id - needed for backward compatibility
+                    if hasattr(credit_service, "pending_usage"):
+                        patterns_to_check = [
+                            f"{run_id}_",
+                            f"{run_id}_OpenAIToolsAgent", 
+                            f"{run_id}_Agent",
                         ]
-                        all_partial_matches.extend(partial_matches)
-                    
-                    if all_partial_matches:
-                        print(f"Found {len(all_partial_matches)} partial run_id matches. Transferring to primary run_id.")
-                        print(f"Matched run_ids: {all_partial_matches}")
                         
-                        # Get or create tracking set for merged KBs
-                        if not hasattr(credit_service, "_logged_kbs"):
-                            credit_service._logged_kbs = {}
-                        if run_id not in credit_service._logged_kbs:
-                            credit_service._logged_kbs[run_id] = set()
+                        all_partial_matches = []
+                        for pattern in patterns_to_check:
+                            partial_matches = [
+                                pending_id for pending_id in credit_service.pending_usage.keys() 
+                                if pattern in pending_id
+                            ]
+                            all_partial_matches.extend(partial_matches)
+                        
+                        if all_partial_matches:
+                            print(f"Found {len(all_partial_matches)} partial run_id matches. Transferring to primary run_id.")
                             
-                        # Track which KBs have been merged to prevent double-counting
-                        merged_kbs = set()
-                        
-                        # Consolidate usage data from partial matches to the main run_id
-                        for partial_id in all_partial_matches:
-                            if partial_id in credit_service.pending_usage:
-                                pending_data = credit_service.pending_usage[partial_id]
-                                
-                                # Create or get the main pending usage entry
-                                if run_id not in credit_service.pending_usage:
-                                    from langflow.services.credit.service import PendingUsage
-                                    credit_service.pending_usage[run_id] = PendingUsage()
-                                
-                                # Transfer the data
-                                if pending_data.tokens:
-                                    original_token_count = len(credit_service.pending_usage[run_id].tokens)
-                                    credit_service.pending_usage[run_id].tokens.extend(pending_data.tokens)
-                                    print(f"[Merge] Transferred {len(pending_data.tokens)} token usage entries from {partial_id}")
-                                    print(f"[Merge] Total token entries for {run_id}: {len(credit_service.pending_usage[run_id].tokens)} (was {original_token_count})")
-                                
-                                if pending_data.tools:
-                                    credit_service.pending_usage[run_id].tools.extend(pending_data.tools)
-                                    print(f"[Merge] Transferred {len(pending_data.tools)} tool usage entries from {partial_id}")
-                                
-                                # Transfer KB data without duplicates
-                                for kb_usage in pending_data.kbs:
-                                    if kb_usage.kb_name not in merged_kbs:
-                                        credit_service.pending_usage[run_id].kbs.append(kb_usage)
-                                        merged_kbs.add(kb_usage.kb_name)
-                                        print(f"[Merge] Added KB {kb_usage.kb_name} from {partial_id}")
-                                    else:
-                                        print(f"[Merge] Skipped duplicate KB {kb_usage.kb_name} from {partial_id}")
-                                
-                                # Remove the partial entry
-                                credit_service.pending_usage.pop(partial_id)
-                        
-                        # Now finalize with the merged data
-                        credit_service.finalize_run_cost(run_id=run_id)
+                            # Consolidate usage data from partial matches to the main run_id
+                            for partial_id in all_partial_matches:
+                                if partial_id in credit_service.pending_usage:
+                                    pending_data = credit_service.pending_usage[partial_id]
+                                    
+                                    # Create or get the main pending usage entry
+                                    if run_id not in credit_service.pending_usage:
+                                        from langflow.services.credit.service import PendingUsage
+                                        credit_service.pending_usage[run_id] = PendingUsage()
+                                    
+                                    # Transfer the data
+                                    if pending_data.tokens:
+                                        credit_service.pending_usage[run_id].tokens.extend(pending_data.tokens)
+                                        print(f"[Merge] Transferred {len(pending_data.tokens)} token usage entries")
+                                    
+                                    if pending_data.tools:
+                                        credit_service.pending_usage[run_id].tools.extend(pending_data.tools)
+                                        print(f"[Merge] Transferred {len(pending_data.tools)} tool usage entries")
+                                    
+                                    if pending_data.kbs:
+                                        credit_service.pending_usage[run_id].kbs.extend(pending_data.kbs)
+                                        print(f"[Merge] Transferred {len(pending_data.kbs)} KB usage entries")
+                                    
+                                    # Remove the partial entry
+                                    credit_service.pending_usage.pop(partial_id)
+                            
+                            # Now finalize with the merged data
+                            await credit_service.finalize_run_cost(run_id=run_id)
             elif not credit_service:
                 print("CreditService not available, skipping cost finalization.")
             elif not graph or not graph.session_id:

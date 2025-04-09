@@ -99,5 +99,5 @@ password_reset_limiter = create_rate_limiter(times=3, seconds=600)
 # Email verification limiter: 5 attempts per 10 minutes
 email_verification_limiter = create_rate_limiter(times=5, seconds=600)
 
-# Registration limiter: 3 attempts per hour per IP
-registration_limiter = create_rate_limiter(times=3, seconds=3600) 
+# Registration limiter: Increased to 10 attempts per hour per IP
+registration_limiter = create_rate_limiter(times=10, seconds=3600) 

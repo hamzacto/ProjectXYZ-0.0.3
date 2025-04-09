@@ -16,6 +16,8 @@ from langflow.services.auth.utils import create_token
 
 
 class EmailService:
+    name = "email_service"
+
     def __init__(self):
         self.settings = get_settings_service().email_settings
         self.setup_templates()

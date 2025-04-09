@@ -17,6 +17,7 @@ from langflow.api.v1.vectorstore import router as vectorstore_router
 from langflow.api.v1.slack_integrations import router as slack_integrations_router  
 from langflow.api.v1.hubspot_integrations import router as hubspot_integrations_router  
 from langflow.api.v1.flow_wizard_metadata import router as flow_wizard_metadata_router
+from langflow.api.v1.billing_debug import router as billing_debug_router
 __all__ = [
     "api_key_router",
     "chat_router",
@@ -37,4 +38,5 @@ __all__ = [
     "slack_integrations_router",
     "hubspot_integrations_router",
     "flow_wizard_metadata_router",
+    "billing_debug_router",
 ]
