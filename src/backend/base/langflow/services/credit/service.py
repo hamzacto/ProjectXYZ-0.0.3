@@ -419,19 +419,55 @@ class CreditService(Service):
             from langflow.services.manager import service_manager
             billing_service = service_manager.get(ServiceType.BILLING_SERVICE)
             if billing_service:
+                # Get user_id from TokenUsageRegistry if available
+                user_id = None
+                try:
+                    from langflow.utils.token_usage_registry import TokenUsageRegistry
+                    registry = TokenUsageRegistry.get_instance()
+                    user_id = registry._get_user_id_for_flow(run_id)
+                    
+                    # If no user_id found for this run_id, check related IDs
+                    if not user_id and hasattr(registry, "_id_mapping"):
+                        # Check if this run_id maps to another ID
+                        if run_id in registry._id_mapping:
+                            mapped_id = registry._id_mapping[run_id]
+                            user_id = registry._get_user_id_for_flow(mapped_id)
+                            if user_id:
+                                print(f"[CreditService] Found user_id from mapped flow ID: {mapped_id}")
+                        
+                        # Also check if any other ID maps to this run_id
+                        for source_id, target_id in registry._id_mapping.items():
+                            if target_id == run_id:
+                                user_id = registry._get_user_id_for_flow(source_id)
+                                if user_id:
+                                    print(f"[CreditService] Found user_id from reverse mapped flow ID: {source_id}")
+                                    break
+                    
+                    if user_id:
+                        print(f"[CreditService] Found user_id: {user_id} for run: {run_id}")
+                    else:
+                        print(f"[CreditService] WARNING: No user_id found for run: {run_id}")
+                except Exception as e:
+                    print(f"[CreditService] Error getting user_id from TokenUsageRegistry: {e}")
+                
+                # If we couldn't get a user_id, we need to skip calling BillingService
+                if not user_id:
+                    print(f"[CreditService] Skipping BillingService updates - missing user_id for run: {run_id}")
+                    return cost_breakdown
+                
                 # Schedule individual logging tasks for each usage type
                 tasks = []
                 if cost_breakdown.token_usages:
                     for token_usage in cost_breakdown.token_usages:
-                        tasks.append(billing_service.log_token_usage(run_id=run_id, token_usage=token_usage))
+                        tasks.append(billing_service.log_token_usage(run_id=run_id, token_usage=token_usage, user_id=user_id))
                 
                 if cost_breakdown.tool_usages:
                     for tool_usage in cost_breakdown.tool_usages:
-                         tasks.append(billing_service.log_tool_usage(run_id=run_id, tool_usage=tool_usage))
+                         tasks.append(billing_service.log_tool_usage(run_id=run_id, tool_usage=tool_usage, user_id=user_id))
                 
                 if cost_breakdown.kb_usages:
                      for kb_usage in cost_breakdown.kb_usages:
-                         tasks.append(billing_service.log_kb_usage(run_id=run_id, kb_usage=kb_usage))
+                         tasks.append(billing_service.log_kb_usage(run_id=run_id, kb_usage=kb_usage, user_id=user_id))
                 
                 if tasks:
                     # Run all logging tasks concurrently

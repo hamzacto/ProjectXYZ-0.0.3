@@ -102,7 +102,7 @@ class OpenAIModelComponent(LCModelComponent):
 
         # Log model name for token tracking
         try:
-            from langflow.utils.validate import TokenUsageRegistry
+            from langflow.utils.token_usage_registry import TokenUsageRegistry
             context = TokenUsageRegistry.get_flow_context()
             if context:
                 component_id = context.get("component_id")

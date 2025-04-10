@@ -5,6 +5,7 @@ import traceback
 import uuid
 import builtins
 from collections.abc import AsyncIterator
+import threading
 
 from fastapi import BackgroundTasks, HTTPException
 from fastapi.responses import JSONResponse
@@ -44,10 +45,21 @@ original_print = builtins.print
 # Create a set of known KB components (case-insensitive)
 KNOWN_KB_COMPONENTS = {"milvus", "chroma", "qdrant", "pinecone", "vectorstore"} 
 
-# Flag to control if interception is active
-_interception_active = False
-# Current flow ID for KB tracking
-_current_flow_id = None
+# Thread-local storage for flow tracking
+_flow_context = threading.local()
+
+def flow_context_get_id():
+    """Get the current flow ID from thread-local storage."""
+    return getattr(_flow_context, 'flow_id', None)
+
+def flow_context_is_active():
+    """Check if interception is active from thread-local storage."""
+    return getattr(_flow_context, 'interception_active', False)
+
+def flow_context_set(flow_id=None, active=False):
+    """Set the interception state in thread-local storage."""
+    _flow_context.flow_id = flow_id
+    _flow_context.interception_active = active
 
 def kb_tracking_print_interceptor(*args, **kwargs):
     """Global print interceptor to detect KB tool invocations."""
@@ -55,7 +67,7 @@ def kb_tracking_print_interceptor(*args, **kwargs):
     original_print(*args, **kwargs)
     
     # Only process when interception is active
-    if _interception_active and _current_flow_id:
+    if flow_context_is_active() and flow_context_get_id():
         # Check if this is a tool invocation message
         if args and isinstance(args[0], str) and args[0].startswith("Invoking: `"):
             try:
@@ -81,13 +93,13 @@ def kb_tracking_print_interceptor(*args, **kwargs):
                     if is_kb_tool:
                         # Use TokenUsageRegistry to track KB usage - single source of truth
                         try:
-                            from langflow.utils.validate import TokenUsageRegistry
+                            from langflow.utils.token_usage_registry import TokenUsageRegistry
                             registry = TokenUsageRegistry.get_instance()
                             # Set flow context (if not already set)
-                            registry.set_flow_context(flow_id=_current_flow_id)
+                            registry.set_flow_context(flow_id=flow_context_get_id())
                             # Track KB tool invocation
                             registry.track_kb_tool_invocation(kb_name=kb_base)
-                            original_print(f"[KB Interceptor] ✅ Tracked KB usage for {kb_base} with flow_id {_current_flow_id}")
+                            original_print(f"[KB Interceptor] ✅ Tracked KB usage for {kb_base} with flow_id {flow_context_get_id()}")
                         except Exception as e:
                             original_print(f"[KB Interceptor] Error tracking KB tool via registry: {e}")
             except Exception as e:
@@ -221,40 +233,45 @@ async def generate_flow_events(
     - Processing vertices
     - Handling errors and cleanup
     """
-    # Activate global tracking
-    _interception_active = True
-    _current_flow_id = str(flow_id)
-    original_print(f"[KB Interceptor] Activated for flow: {_current_flow_id}")
+    # Activate thread-local tracking for this flow
+    flow_id_str = str(flow_id)
+    flow_context_set(flow_id=flow_id_str, active=True)
+    original_print(f"[KB Interceptor] Activated for flow: {flow_id_str}")
     
-    # Reset KB tracking for this flow in CreditService
     try:
+        # Reset KB tracking for this flow in CreditService
         from langflow.services.manager import service_manager
         from langflow.services.schema import ServiceType
-        from langflow.utils.validate import TokenUsageRegistry
+        from langflow.utils.token_usage_registry import TokenUsageRegistry
         
         # Reset all tracking data for this flow before starting a new run
         # This ensures each run has isolated metrics
-        TokenUsageRegistry.reset_flow_tracking(_current_flow_id)
+        TokenUsageRegistry.reset_flow_tracking(flow_id_str)
+        
+        # NEW: Store the user ID in TokenUsageRegistry for proper user context
+        if current_user and current_user.id:
+            TokenUsageRegistry.set_flow_user(flow_id_str, current_user.id)
+            original_print(f"[TokenRegistry] Set user ID {current_user.id} for flow {flow_id_str}")
         
         credit_service = service_manager.get(ServiceType.CREDIT_SERVICE)
         if credit_service and hasattr(credit_service, "_logged_kbs"):
             # Reset KB tracking for this flow_id to ensure fresh tracking
-            if _current_flow_id in credit_service._logged_kbs:
-                credit_service._logged_kbs.pop(_current_flow_id)
-                original_print(f"[KB Tracking] Reset KB tracking for new flow run: {_current_flow_id}")
-                
+            if flow_id_str in credit_service._logged_kbs:
+                credit_service._logged_kbs.pop(flow_id_str)
+                original_print(f"[KB Tracking] Reset KB tracking for new flow run: {flow_id_str}")
+            
         # Also reset tracking in the ToolInvocationTracker
         from langflow.callbacks.cost_tracking import ToolInvocationTracker
-        ToolInvocationTracker.reset_tracking(_current_flow_id)
+        ToolInvocationTracker.reset_tracking(flow_id_str)
         
         # Reset in the TokenUsageRegistry 
-        TokenUsageRegistry.reset_kb_tracking(_current_flow_id)
+        TokenUsageRegistry.reset_kb_tracking(flow_id_str)
         
         # Create a usage record in BillingService
         billing_service = service_manager.get(ServiceType.BILLING_SERVICE)
         if billing_service and current_user and current_user.id:
-            billing_service.set_user_context(current_user.id)
-            session_id = inputs.session if inputs and hasattr(inputs, "session") else _current_flow_id
+            # No longer need to set user context, now passing user_id directly to each method
+            session_id = inputs.session if inputs and hasattr(inputs, "session") else flow_id_str
             usage_record = await billing_service.log_flow_run(
                 flow_id=flow_id,
                 session_id=session_id,
@@ -266,7 +283,6 @@ async def generate_flow_events(
                 # IMPORTANT: Establish UUID to Session ID mapping immediately
                 # This ensures token usage logging has access to the mapping from the start
                 # Add to both BillingService and TokenUsageRegistry
-                flow_id_str = str(flow_id)
                 
                 # 1. Store in BillingService mappings
                 if hasattr(billing_service, "_uuid_to_session_mappings"):
@@ -288,14 +304,13 @@ async def generate_flow_events(
                 registry.sync_flow_ids(flow_id_str, session_id)
             else:
                 original_print(f"[Billing] WARNING: Failed to create usage record for flow run {session_id}")
-                
+            
         # Also reset tracking in the TokenUsageRegistry 
         # TokenUsageRegistry.reset_kb_tracking(_current_flow_id) # This seems redundant or misplaced, commenting out
         
     except Exception as e:
-        logger.error(f"Error during billing setup or KB tracking reset: {e}") # Adjusted error message
-
-    
+        logger.error(f"Error during billing setup or KB tracking reset: {e}")
+        
     try:
         chat_service = get_chat_service()
         telemetry_service = get_telemetry_service()
@@ -382,7 +397,7 @@ async def generate_flow_events(
             
             # Set flow context for token tracking
             try:
-                from langflow.utils.validate import TokenUsageRegistry
+                from langflow.utils.token_usage_registry import TokenUsageRegistry
                 TokenUsageRegistry.set_flow_context(flow_id=flow_id_str, component_id=vertex_id)
             except Exception as e:
                 logger.warning(f"Failed to set token tracking context: {e}")
@@ -494,7 +509,7 @@ async def generate_flow_events(
             finally:
                 # Clear token tracking context when done
                 try:
-                    from langflow.utils.validate import TokenUsageRegistry
+                    from langflow.utils.token_usage_registry import TokenUsageRegistry
                     TokenUsageRegistry.clear_flow_context()
                 except Exception as e:
                     logger.warning(f"Failed to clear token tracking context: {e}")
@@ -577,7 +592,7 @@ async def generate_flow_events(
             raise
         # Print flow summary after all vertices are processed
         try:
-            from langflow.utils.validate import TokenUsageRegistry
+            from langflow.utils.token_usage_registry import TokenUsageRegistry
             flow_id_str = str(flow_id)
             registry = TokenUsageRegistry.get_instance()
             registry.print_flow_summary(flow_id_str)
@@ -588,7 +603,7 @@ async def generate_flow_events(
         try:
             from langflow.services.manager import service_manager
             from langflow.services.schema import ServiceType
-            from langflow.utils.validate import TokenUsageRegistry
+            from langflow.utils.token_usage_registry import TokenUsageRegistry
             
             credit_service = service_manager.get(ServiceType.CREDIT_SERVICE)
             if credit_service and graph and graph.session_id:
@@ -705,10 +720,29 @@ async def generate_flow_events(
         except Exception as e:
             logger.error(f"Error finalizing run cost: {e}")
         event_manager.on_end(data={})
-        await event_manager.queue.put((None, None, time.time()))
-
+        await event_manager.queue.put((None, None, time.time()))    
     finally:
         # Deactivate KB tracking when done
-        _interception_active = False
-        _current_flow_id = None
+        flow_context_set(flow_id=None, active=False)
         original_print("[KB Interceptor] Deactivated")
+        
+        # Clean up any background event loops
+        try:
+            from langflow.utils.token_usage_registry import TokenUsageRegistry
+            registry = TokenUsageRegistry.get_instance()
+            
+            # Clean up token thread loop if it exists
+            if hasattr(registry, "_token_thread_loop") and registry._token_thread_loop:
+                original_print("[KB Interceptor] Stopping token thread event loop")
+                registry._token_thread_loop.call_soon_threadsafe(registry._token_thread_loop.stop)
+                registry._token_thread_loop = None
+                
+            # Clean up KB thread loop if it exists
+            if hasattr(registry, "_kb_thread_loop") and registry._kb_thread_loop:
+                original_print("[KB Interceptor] Stopping KB thread event loop")
+                registry._kb_thread_loop.call_soon_threadsafe(registry._kb_thread_loop.stop)
+                registry._kb_thread_loop = None
+                
+            original_print("[KB Interceptor] Background event loops cleaned up")
+        except Exception as e:
+            logger.warning(f"Error cleaning up background event loops: {e}")

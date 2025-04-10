@@ -4,6 +4,7 @@ from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.outputs import LLMResult
 from langchain_core.agents import AgentAction, AgentFinish
 import asyncio
+import threading
 
 from langflow.services.manager import service_manager
 from langflow.services.schema import ServiceType
@@ -29,6 +30,9 @@ class ToolInvocationTracker:
     # We'll use TokenUsageRegistry instead
     _kb_invocations = {}  # Format: {run_id: [kb_names]}
     
+    # Thread safety locks
+    _kb_invocations_lock = threading.RLock()
+    
     @classmethod
     def register_invocation(cls, run_id: str, tool_name: str):
         """Register a tool invocation for tracking."""
@@ -45,18 +49,19 @@ class ToolInvocationTracker:
         if kb_base:
             # It's a KB tool, register it using TokenUsageRegistry
             try:
-                from langflow.utils.validate import TokenUsageRegistry
+                from langflow.utils.token_usage_registry import TokenUsageRegistry
                 # Use static methods directly
                 TokenUsageRegistry.set_flow_context(flow_id=run_id)
                 TokenUsageRegistry.track_kb_tool_invocation(kb_name=kb_base)
                 print(f"[ToolTracker] Registered KB invocation: {kb_base} for run_id {run_id}")
                 
                 # Also add to internal tracking to preserve any existing code that depends on it
-                if run_id not in cls._kb_invocations:
-                    cls._kb_invocations[run_id] = []
-                
-                if kb_base not in cls._kb_invocations[run_id]:
-                    cls._kb_invocations[run_id].append(kb_base)
+                with cls._kb_invocations_lock:
+                    if run_id not in cls._kb_invocations:
+                        cls._kb_invocations[run_id] = []
+                    
+                    if kb_base not in cls._kb_invocations[run_id]:
+                        cls._kb_invocations[run_id].append(kb_base)
                 
             except Exception as e:
                 print(f"[ToolTracker] Error registering KB usage with TokenUsageRegistry: {e}")
@@ -79,13 +84,14 @@ class ToolInvocationTracker:
     def reset_tracking(cls, run_id: str):
         """Reset tracking for a flow run."""
         # Clear internal tracking
-        if run_id in cls._kb_invocations:
-            cls._kb_invocations.pop(run_id)
-            print(f"[ToolTracker] Reset KB tracking for flow: {run_id}")
+        with cls._kb_invocations_lock:
+            if run_id in cls._kb_invocations:
+                cls._kb_invocations.pop(run_id)
+                print(f"[ToolTracker] Reset KB tracking for flow: {run_id}")
         
         # Also reset in TokenUsageRegistry
         try:
-            from langflow.utils.validate import TokenUsageRegistry
+            from langflow.utils.token_usage_registry import TokenUsageRegistry
             TokenUsageRegistry.reset_kb_tracking(run_id)
         except Exception as e:
             print(f"[ToolTracker] Error resetting KB tracking in registry: {e}")
@@ -102,6 +108,24 @@ class AgentCostTrackingCallbackHandler(BaseCallbackHandler):
         self.run_id = run_id
         self._credit_service = None # Lazily load service
         self._billing_service = None # Lazily load service
+        self._background_loop = None
+        self._background_thread = None
+        self._lock = threading.RLock()  # Add lock for thread safety
+
+    def _ensure_background_loop(self):
+        """Ensure a background event loop exists for async operations."""
+        with self._lock:
+            if self._background_loop is None:
+                import threading
+                self._background_loop = asyncio.new_event_loop()
+                
+                def run_event_loop():
+                    asyncio.set_event_loop(self._background_loop)
+                    self._background_loop.run_forever()
+                    
+                self._background_thread = threading.Thread(target=run_event_loop, daemon=True)
+                self._background_thread.start()
+                print(f"[CostCallback] Started background event loop thread for {self.run_id}")
 
     @property
     def credit_service(self) -> Optional[CreditService]:
@@ -205,7 +229,7 @@ class AgentCostTrackingCallbackHandler(BaseCallbackHandler):
         try:
             if is_kb_tool and kb_name:
                 # Log KB usage via TokenUsageRegistry
-                from langflow.utils.validate import TokenUsageRegistry
+                from langflow.utils.token_usage_registry import TokenUsageRegistry
                 TokenUsageRegistry.set_flow_context(flow_id=self.run_id)
                 TokenUsageRegistry.track_kb_tool_invocation(kb_name=kb_name)
                 print(f"[CostCallback] ✅ Detected KB usage: {kb_name} for run_id: {self.run_id}")
@@ -215,7 +239,35 @@ class AgentCostTrackingCallbackHandler(BaseCallbackHandler):
                 billing_service = self.billing_service
                 if billing_service:
                     kb_usage = KBUsage(kb_name=kb_name, count=1)
-                    billing_service.log_kb_usage(self.run_id, kb_usage)
+                    # Use safe async execution pattern
+                    try:
+                        # If we're in an async context, we can use create_task
+                        try:
+                            loop = asyncio.get_event_loop()
+                            if loop.is_running():
+                                asyncio.create_task(billing_service.log_kb_usage(self.run_id, kb_usage))
+                                print(f"[CostCallback] Scheduled KB Usage in BillingService via create_task: {kb_name}")
+                            else:
+                                # Start a new background thread with its own event loop
+                                with self._lock:
+                                    self._ensure_background_loop()
+                                asyncio.run_coroutine_threadsafe(
+                                    billing_service.log_kb_usage(self.run_id, kb_usage),
+                                    self._background_loop
+                                )
+                                print(f"[CostCallback] Scheduled KB Usage in BillingService via threadsafe: {kb_name}")
+                        except RuntimeError:
+                            # If we're not in an async context, use a background thread
+                            with self._lock:
+                                self._ensure_background_loop()
+                            asyncio.run_coroutine_threadsafe(
+                                billing_service.log_kb_usage(self.run_id, kb_usage),
+                                self._background_loop
+                            )
+                            print(f"[CostCallback] Scheduled KB Usage in BillingService via threadsafe: {kb_name}")
+                    except Exception as e:
+                        logger.error(f"[CostCallback] Error scheduling async KB usage: {e}")
+                        print(f"[CostCallback] Error scheduling async KB usage: {e}")
                     print(f"[CostCallback] Logged KB Usage in BillingService: {kb_name}")
             else:
                 # For non-KB tools, still track with CreditService directly
@@ -256,5 +308,22 @@ class AgentCostTrackingCallbackHandler(BaseCallbackHandler):
     # def on_llm_start(...)
     # def on_agent_finish(...)
     # def on_tool_error(...)
+    
+    def cleanup(self):
+        """Clean up resources like background event loops."""
+        with self._lock:
+            if self._background_loop is not None:
+                try:
+                    # Schedule the event loop to stop
+                    self._background_loop.call_soon_threadsafe(self._background_loop.stop)
+                    print(f"[CostCallback] Stopped background event loop for {self.run_id}")
+                    self._background_loop = None
+                    self._background_thread = None
+                except Exception as e:
+                    print(f"[CostCallback] Error cleaning up background loop: {e}")
+                
+    def __del__(self):
+        """Destructor to ensure cleanup when the object is garbage collected."""
+        self.cleanup()
 
 

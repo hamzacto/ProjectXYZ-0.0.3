@@ -48,7 +48,7 @@ from langflow.services.deps import get_session_service, get_settings_service, ge
 from langflow.services.settings.feature_flags import FEATURE_FLAGS
 from langflow.services.telemetry.schema import RunPayload
 from langflow.utils.version import get_version_info
-from langflow.utils.validate import TokenUsageRegistry
+from langflow.utils.token_usage_registry import TokenUsageRegistry
 if TYPE_CHECKING:
     from langflow.services.event_manager import EventManager
     from langflow.services.settings.service import SettingsService
