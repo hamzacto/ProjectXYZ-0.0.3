@@ -38,6 +38,7 @@ from langflow.services.database.models.flow import Flow
 from langflow.services.deps import get_chat_service, get_telemetry_service, session_scope
 from langflow.services.job_queue.service import JobQueueService
 from langflow.services.telemetry.schema import ComponentPayload, PlaygroundPayload
+from langflow.services.billing.cycle_manager import get_billing_cycle_manager
 
 # Store the original print function
 original_print = builtins.print
@@ -233,6 +234,70 @@ async def generate_flow_events(
     - Processing vertices
     - Handling errors and cleanup
     """
+    # First, check if the user has sufficient credits to run the flow
+    if current_user and current_user.id:
+        try:
+            # Minimum credits needed to run a flow
+            MIN_REQUIRED_CREDITS = 5  # Set minimum credits required
+            
+            # Check for active billing period first
+            billing_manager = get_billing_cycle_manager()
+            
+            # This will automatically create a billing period if needed, or renew expired one
+            billing_period = await billing_manager.check_user_billing_period(current_user.id)
+            
+            if not billing_period:
+                logger.error(f"Failed to get or create billing period for user: {current_user.id}")
+                error_message = ErrorMessage(
+                    flow_id=flow_id,
+                    exception=Exception("Billing period error. Please contact support."),
+                )
+                event_manager.on_error(data=error_message.data)
+                raise HTTPException(
+                    status_code=402, 
+                    detail="Unable to set up billing period for your account. Please contact support."
+                )
+            
+            # Get the user from the database to check current credit balance
+            from langflow.services.deps import session_scope
+            
+            async with session_scope() as session:
+                from langflow.services.database.models.user import User
+                from sqlmodel import select
+                
+                user_query = select(User).where(User.id == current_user.id)
+                user = (await session.exec(user_query)).first()
+                
+                if not user:
+                    logger.error(f"User not found: {current_user.id}")
+                    raise HTTPException(
+                        status_code=404, 
+                        detail="User not found"
+                    )
+                
+                if user.credits_balance is not None and user.credits_balance < MIN_REQUIRED_CREDITS:
+                    logger.warning(f"User {user.id} has insufficient credits: {user.credits_balance}")
+                    error_message = ErrorMessage(
+                        flow_id=flow_id,
+                        exception=Exception("Insufficient credits to run this flow"),
+                    )
+                    event_manager.on_error(data=error_message.data)
+                    raise HTTPException(
+                        status_code=402, 
+                        detail=f"Insufficient credits to run this flow. Current balance: {user.credits_balance}, required: {MIN_REQUIRED_CREDITS}"
+                    )
+                    
+                logger.info(f"User {user.id} has sufficient credits: {user.credits_balance}")
+                logger.info(f"User has active billing period: {billing_period.id}, quota remaining: {billing_period.quota_remaining}")
+                
+        except HTTPException:
+            # Re-raise HTTP exceptions
+            raise
+        except Exception as e:
+            logger.error(f"Error checking user credits or billing period: {e}")
+            # Continue with the flow build even if credit check fails to avoid blocking users
+            # This is a fail-safe approach, but we should log the error
+    
     # Activate thread-local tracking for this flow
     flow_id_str = str(flow_id)
     flow_context_set(flow_id=flow_id_str, active=True)
@@ -606,6 +671,8 @@ async def generate_flow_events(
             from langflow.utils.token_usage_registry import TokenUsageRegistry
             
             credit_service = service_manager.get(ServiceType.CREDIT_SERVICE)
+            billing_service = service_manager.get(ServiceType.BILLING_SERVICE)
+            
             if credit_service and graph and graph.session_id:
                 # Use a consistent run_id for all tracking
                 run_id = graph.session_id  # Base run_id
@@ -642,13 +709,25 @@ async def generate_flow_events(
                                 credit_service.pending_usage[run_id].kbs.extend(flow_pending.kbs)
                                 print(f"[ID Sync] Transferred {len(flow_pending.kbs)} KB usage entries")
                 
-                # Simply finalize the run cost with the main run_id
-                # All token and KB usage should already be in CreditService
-                # through the TokenUsageRegistry delegation
+                # First finalize in credit service to calculate all costs
                 result = await credit_service.finalize_run_cost(run_id=run_id)
                 
+                # Now call billing service to update user's credit balance
+                if billing_service and current_user and current_user.id:
+                    print(f"[Billing] Calling finalize_run to update user credit balance for run_id={run_id}")
+                    billing_result = await billing_service.finalize_run(run_id=run_id, user_id=current_user.id)
+                    if billing_result.get("error"):
+                        print(f"[Billing] Error updating user credit balance: {billing_result['error']}")
+                    else:
+                        print(f"[Billing] Successfully updated user credit balance")
+                        # Log information about the app margin
+                        if "app_margin" in billing_result and "base_cost" in billing_result:
+                            base_cost = billing_result["base_cost"]
+                            app_margin = billing_result["app_margin"]
+                            total_cost = billing_result["total_cost"]
+                            print(f"[Billing] Cost breakdown: Base cost = {base_cost}, App margin (20%) = {app_margin}, Total = {total_cost}")
+                
                 # After finalizing, make sure we clean up all tracking data to isolate each run
-                # We've already calculated and displayed the costs, so this data isn't needed anymore
                 TokenUsageRegistry.reset_flow_tracking(run_id)
                 TokenUsageRegistry.reset_flow_tracking(flow_id_str)
                 
@@ -710,8 +789,10 @@ async def generate_flow_events(
                                     # Remove the partial entry
                                     credit_service.pending_usage.pop(partial_id)
                             
-                            # Now finalize with the merged data
+                            # Now finalize with the merged data - call both services
                             await credit_service.finalize_run_cost(run_id=run_id)
+                            if billing_service and current_user and current_user.id:
+                                await billing_service.finalize_run(run_id=run_id, user_id=current_user.id)
             elif not credit_service:
                 print("CreditService not available, skipping cost finalization.")
             elif not graph or not graph.session_id:

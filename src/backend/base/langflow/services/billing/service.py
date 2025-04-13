@@ -151,12 +151,21 @@ class BillingService(Service):
                     session_id=actual_session_id,
                     billing_period_id=billing_period.id if billing_period else None,
                     fixed_cost=FIXED_COST_CREDITS,  # Start with fixed cost
+                    app_margin=0.0,  # Initialize app margin to 0
                     total_cost=FIXED_COST_CREDITS   # Will be updated as usage is logged
                 )
                 
                 print(f"[BILLING_DEBUG] log_flow_run: Created UsageRecord object in memory: session_id={usage_record.session_id}")
                 session.add(usage_record)
                 print(f"[BILLING_DEBUG] log_flow_run: Added UsageRecord to session.")
+                
+                # Also update billing period with the fixed cost
+                if billing_period:
+                    # Update quota used and remaining for the fixed cost
+                    billing_period.quota_used = (billing_period.quota_used or 0) + FIXED_COST_CREDITS
+                    billing_period.quota_remaining = (billing_period.quota_remaining or 0) - FIXED_COST_CREDITS
+                    session.add(billing_period)
+                    print(f"[BILLING_DEBUG] log_flow_run: Updated billing period with fixed cost: {FIXED_COST_CREDITS} credits")
                 
                 # Commit will happen automatically when session_scope exits
                 # No need for flush, refresh, commit, refresh cycle
@@ -238,6 +247,53 @@ class BillingService(Service):
             # Not in cache, add it
             cache[usage_hash] = (current_time, 1)
             return False
+
+    async def _check_overage_limit(self, session, billing_period, additional_cost: float = 0.0) -> bool:
+        """
+        Check if a user has reached their overage limit.
+        Returns True if they're under the limit and can continue, False if they've hit the limit.
+        """
+        if not billing_period or not billing_period.is_overage_limited:
+            # If overage limiting is disabled, always allow
+            return True
+            
+        # If already marked as reached limit, return immediately
+        if billing_period.has_reached_limit:
+            return False
+            
+        # Check if quota is already negative (in overage)
+        current_overage = 0
+        if billing_period.quota_remaining < 0:
+            current_overage = abs(billing_period.quota_remaining)
+        
+        # Get the subscription plan to get the overage rate
+        plan = None
+        if billing_period.subscription_plan_id:
+            plan = await session.get(SubscriptionPlan, billing_period.subscription_plan_id)
+        
+        if not plan or not plan.allows_overage:
+            # Plan doesn't allow overage, so check immediately against the quota
+            if billing_period.quota_remaining < 0 or (billing_period.quota_remaining - additional_cost) < 0:
+                # Mark as reached limit
+                billing_period.has_reached_limit = True
+                session.add(billing_period)
+                return False
+            return True
+            
+        # Calculate current overage cost in USD
+        overage_rate = plan.overage_price_per_credit
+        current_overage_cost = (current_overage + additional_cost) * overage_rate
+        
+        # Check against the overage limit in USD
+        if current_overage_cost > billing_period.overage_limit_usd:
+            # Mark as reached limit
+            billing_period.has_reached_limit = True
+            session.add(billing_period)
+            logger.warning(f"User has reached overage limit of ${billing_period.overage_limit_usd}")
+            return False
+            
+        # User is below their overage limit
+        return True
 
     async def log_token_usage(self, 
                          run_id: str, 
@@ -324,21 +380,31 @@ class BillingService(Service):
                     billing_period = await session.get(BillingPeriod, usage_record.billing_period_id)
                     if billing_period:
                         print(f"[BILLING_DEBUG] log_token_usage: Found billing period {billing_period.id}. Updating quota.")
+                        
+                        # Check if user has hit their overage limit before applying the charge
+                        # We need to know if this charge would put them over the limit
+                        under_limit = await self._check_overage_limit(session, billing_period, credit_cost)
+                        if not under_limit:
+                            print(f"[BILLING_DEBUG] log_token_usage: User has reached their overage limit of ${billing_period.overage_limit_usd}. Rejecting the operation.")
+                            return False  # Reject the operation - user is over their limit
+                            
                         billing_period.quota_used = (billing_period.quota_used or 0) + credit_cost
                         billing_period.quota_remaining = (billing_period.quota_remaining or 0) - credit_cost
-                        
-                        # Handle overage if applicable
+
+                        # Handle overage if applicable - Calculation moved to finalize_run
                         if billing_period.quota_remaining < 0:
-                            print(f"[BILLING_DEBUG] log_token_usage: Quota remaining is negative ({billing_period.quota_remaining}). Checking overage.")
-                            user = await session.get(User, user_id)
-                            if user and user.subscription_plan_id:
-                                plan = await session.get(SubscriptionPlan, user.subscription_plan_id)
-                                if plan and plan.allows_overage:
-                                    overage_amount = abs(billing_period.quota_remaining)
-                                    billing_period.overage_credits = (billing_period.overage_credits or 0) + overage_amount
-                                    billing_period.overage_cost = (billing_period.overage_cost or 0) + overage_amount * plan.overage_price_per_credit
-                                    print(f"[BILLING_DEBUG] log_token_usage: Updated overage credits: {billing_period.overage_credits}, cost: {billing_period.overage_cost}")
-                        
+                            print(f"[BILLING_DEBUG] log_token_usage: Quota remaining is negative ({billing_period.quota_remaining}). Final overage calculation deferred to finalize_run.")
+                            # user = await session.get(User, user_id) # No longer needed here
+                            # if user and user.subscription_plan_id:
+                            #     plan = await session.get(SubscriptionPlan, user.subscription_plan_id)
+                            #     if plan and plan.allows_overage:
+                            #         # REMOVED: Overage calculation moved to finalize_run
+                            #         # overage_amount = abs(billing_period.quota_remaining)
+                            #         # billing_period.overage_credits = (billing_period.overage_credits or 0) + overage_amount
+                            #         # billing_period.overage_cost = (billing_period.overage_cost or 0) + overage_amount * plan.overage_price_per_credit
+                            #         # print(f"[BILLING_DEBUG] log_token_usage: Updated overage credits: {billing_period.overage_credits}, cost: {billing_period.overage_cost}")
+                            #         pass # Defer calculation
+
                         updates.append(billing_period)
                         print(f"[BILLING_DEBUG] log_token_usage: Added BillingPeriod to batch updates. Quota: used={billing_period.quota_used}, remaining={billing_period.quota_remaining}")
                     else:
@@ -451,21 +517,30 @@ class BillingService(Service):
                     billing_period = await session.get(BillingPeriod, usage_record.billing_period_id)
                     if billing_period:
                         print(f"[BILLING_DEBUG] log_tool_usage: Found billing period {billing_period.id}. Updating quota.")
+                        
+                        # Check if user has hit their overage limit before applying the charge
+                        under_limit = await self._check_overage_limit(session, billing_period, tool_cost)
+                        if not under_limit:
+                            print(f"[BILLING_DEBUG] log_tool_usage: User has reached their overage limit of ${billing_period.overage_limit_usd}. Rejecting the operation.")
+                            return False  # Reject the operation - user is over their limit
+                            
                         billing_period.quota_used = (billing_period.quota_used or 0) + tool_cost
                         billing_period.quota_remaining = (billing_period.quota_remaining or 0) - tool_cost
-                        
-                        # Handle overage if applicable
+
+                        # Handle overage if applicable - Calculation moved to finalize_run
                         if billing_period.quota_remaining < 0:
-                            print(f"[BILLING_DEBUG] log_tool_usage: Quota remaining is negative ({billing_period.quota_remaining}). Checking overage.")
-                            user = await session.get(User, user_id)
-                            if user and user.subscription_plan_id:
-                                plan = await session.get(SubscriptionPlan, user.subscription_plan_id)
-                                if plan and plan.allows_overage:
-                                    overage_amount = abs(billing_period.quota_remaining)
-                                    billing_period.overage_credits = (billing_period.overage_credits or 0) + overage_amount
-                                    billing_period.overage_cost = (billing_period.overage_cost or 0) + overage_amount * plan.overage_price_per_credit
-                                    print(f"[BILLING_DEBUG] log_tool_usage: Updated overage credits: {billing_period.overage_credits}, cost: {billing_period.overage_cost}")
-                            
+                            print(f"[BILLING_DEBUG] log_tool_usage: Quota remaining is negative ({billing_period.quota_remaining}). Final overage calculation deferred to finalize_run.")
+                            # user = await session.get(User, user_id) # No longer needed here
+                            # if user and user.subscription_plan_id:
+                            #     plan = await session.get(SubscriptionPlan, user.subscription_plan_id)
+                            #     if plan and plan.allows_overage:
+                            #         # REMOVED: Overage calculation moved to finalize_run
+                            #         # overage_amount = abs(billing_period.quota_remaining)
+                            #         # billing_period.overage_credits = (billing_period.overage_credits or 0) + overage_amount
+                            #         # billing_period.overage_cost = (billing_period.overage_cost or 0) + overage_amount * plan.overage_price_per_credit
+                            #         # print(f"[BILLING_DEBUG] log_tool_usage: Updated overage credits: {billing_period.overage_credits}, cost: {billing_period.overage_cost}")
+                            #         pass # Defer calculation
+
                         updates.append(billing_period)
                         print(f"[BILLING_DEBUG] log_tool_usage: Added BillingPeriod to batch updates.")
                     else:
@@ -594,21 +669,30 @@ class BillingService(Service):
                     billing_period = await session.get(BillingPeriod, usage_record.billing_period_id)
                     if billing_period:
                         print(f"[BILLING_DEBUG] log_kb_usage: Found billing period {billing_period.id}. Updating quota.")
+                        
+                        # Check if user has hit their overage limit before applying the charge
+                        under_limit = await self._check_overage_limit(session, billing_period, kb_cost)
+                        if not under_limit:
+                            print(f"[BILLING_DEBUG] log_kb_usage: User has reached their overage limit of ${billing_period.overage_limit_usd}. Rejecting the operation.")
+                            return False  # Reject the operation - user is over their limit
+                            
                         billing_period.quota_used = (billing_period.quota_used or 0) + kb_cost
                         billing_period.quota_remaining = (billing_period.quota_remaining or 0) - kb_cost
-                        
-                        # Handle overage if applicable
+
+                        # Handle overage if applicable - Calculation moved to finalize_run
                         if billing_period.quota_remaining < 0:
-                            print(f"[BILLING_DEBUG] log_kb_usage: Quota remaining is negative ({billing_period.quota_remaining}). Checking overage.")
+                            print(f"[BILLING_DEBUG] log_kb_usage: Quota remaining is negative ({billing_period.quota_remaining}). Final overage calculation deferred to finalize_run.")
                             # Already have user from above
-                            if user and user.subscription_plan_id:
-                                plan = await session.get(SubscriptionPlan, user.subscription_plan_id)
-                                if plan and plan.allows_overage:
-                                    overage_amount = abs(billing_period.quota_remaining)
-                                    billing_period.overage_credits = (billing_period.overage_credits or 0) + overage_amount
-                                    billing_period.overage_cost = (billing_period.overage_cost or 0) + overage_amount * plan.overage_price_per_credit
-                                    print(f"[BILLING_DEBUG] log_kb_usage: Updated overage credits: {billing_period.overage_credits}, cost: {billing_period.overage_cost}")
-                        
+                            # if user and user.subscription_plan_id:
+                            #     plan = await session.get(SubscriptionPlan, user.subscription_plan_id)
+                            #     if plan and plan.allows_overage:
+                            #         # REMOVED: Overage calculation moved to finalize_run
+                            #         # overage_amount = abs(billing_period.quota_remaining)
+                            #         # billing_period.overage_credits = (billing_period.overage_credits or 0) + overage_amount
+                            #         # billing_period.overage_cost = (billing_period.overage_cost or 0) + overage_amount * plan.overage_price_per_credit
+                            #         # print(f"[BILLING_DEBUG] log_kb_usage: Updated overage credits: {billing_period.overage_credits}, cost: {billing_period.overage_cost}")
+                            #         pass # Defer calculation
+
                         updates.append(billing_period)
                         print(f"[BILLING_DEBUG] log_kb_usage: Added BillingPeriod to batch updates.")
                     else:
@@ -673,6 +757,19 @@ class BillingService(Service):
                 )).all()
                 print(f"[BILLING_DEBUG] Found {len(kb_details)} KB usage details")
                 
+                # Calculate app margin (20% of total cost)
+                app_margin = usage_record.total_cost * 0.2
+                
+                # Add app margin to total cost
+                original_cost = usage_record.total_cost
+                usage_record.app_margin = app_margin
+                usage_record.total_cost = original_cost + app_margin
+                
+                print(f"[BILLING_DEBUG] Applied 20% app margin: original_cost={original_cost}, app_margin={app_margin}, new_total={usage_record.total_cost}")
+                
+                # Update the usage record with the new total cost including margin
+                session.add(usage_record)
+                
                 # Fetch both user and active billing period in a single query if possible
                 # First try to get user with their subscription plan
                 user = (await session.exec(
@@ -683,7 +780,7 @@ class BillingService(Service):
                 active_period = None
                 if user:
                     print(f"[BILLING_DEBUG] Found user {user.id}, current credits: {user.credits_balance}")
-                    # Update user's credit balance
+                    # Update user's credit balance with the cost including margin
                     user.credits_balance = (user.credits_balance or 0) - usage_record.total_cost
                     
                     # Get active billing period in the same transaction
@@ -692,6 +789,77 @@ class BillingService(Service):
                         .where(BillingPeriod.user_id == user_id, BillingPeriod.status == "active")
                     )).first()
                     
+                    # Update quota used and remaining in the billing period
+                    if active_period:
+                        # First ensure fixed cost is included in billing period (it was missing)
+                        fixed_cost_accounted = False
+                        
+                        # If quota_used is less than fixed_cost, it means fixed cost wasn't properly accounted for
+                        if active_period.quota_used < usage_record.fixed_cost:
+                            fixed_cost_diff = usage_record.fixed_cost
+                            active_period.quota_used = (active_period.quota_used or 0) + fixed_cost_diff
+                            active_period.quota_remaining = (active_period.quota_remaining or 0) - fixed_cost_diff
+                            print(f"[BILLING_DEBUG] Accounting for missing fixed cost in billing period: +{fixed_cost_diff} credits")
+                            fixed_cost_accounted = True
+                        
+                        # Adjust the billing period quota for the app margin
+                        quota_difference = app_margin
+                        active_period.quota_used = (active_period.quota_used or 0) + quota_difference
+                        active_period.quota_remaining = (active_period.quota_remaining or 0) - quota_difference
+                        
+                        # Final synchronization check - ensure billing period matches user balance
+                        if user and abs(active_period.quota_remaining - user.credits_balance) > 0.001:
+                            print(f"[BILLING_DEBUG] Detected quota sync issue: period={active_period.quota_remaining}, user={user.credits_balance}")
+                            # Force sync with user's credit balance
+                            original_quota = active_period.quota_used + active_period.quota_remaining
+                            active_period.quota_remaining = user.credits_balance
+                            active_period.quota_used = original_quota - user.credits_balance
+                            print(f"[BILLING_DEBUG] Forced quota synchronization with user balance. New values: used={active_period.quota_used}, remaining={active_period.quota_remaining}")
+                        
+                        # --- START FINAL OVERAGE CALCULATION ---
+                        # Reset overage fields before recalculating based on the final quota_remaining
+                        active_period.overage_credits = 0.0
+                        active_period.overage_cost = 0.0
+                        active_period.has_reached_limit = False # Assume not reached initially
+
+                        if active_period.quota_remaining < 0:
+                            print(f"[BILLING_DEBUG] finalize_run: Final quota remaining is negative ({active_period.quota_remaining}). Calculating final overage.")
+                            plan = None
+                            if active_period.subscription_plan_id:
+                                plan = await session.get(SubscriptionPlan, active_period.subscription_plan_id)
+
+                            if plan and plan.allows_overage:
+                                final_overage_credits = abs(active_period.quota_remaining)
+                                final_overage_cost_usd = final_overage_credits * plan.overage_price_per_credit
+
+                                active_period.overage_credits = final_overage_credits
+                                active_period.overage_cost = final_overage_cost_usd
+                                print(f"[BILLING_DEBUG] finalize_run: Calculated final overage: credits={active_period.overage_credits}, cost={active_period.overage_cost}")
+
+                                # Check if the user has reached their overage limit based on final cost
+                                if active_period.is_overage_limited and final_overage_cost_usd > active_period.overage_limit_usd:
+                                    print(f"[BILLING_DEBUG] finalize_run: User has reached their overage limit of ${active_period.overage_limit_usd}. Current overage cost: ${final_overage_cost_usd}")
+                                    active_period.has_reached_limit = True
+                                    logger.warning(f"User {user_id} has reached their overage limit of ${active_period.overage_limit_usd}")
+                                else:
+                                    # Ensure limit flag is False if they are under the limit
+                                    active_period.has_reached_limit = False
+
+                            elif not plan or not plan.allows_overage:
+                                # If plan doesn't allow overage but user is negative, mark as reached limit
+                                active_period.has_reached_limit = True
+                                print(f"[BILLING_DEBUG] finalize_run: User has negative quota but plan doesn't allow overage. Marking as reached limit.")
+                        else:
+                             # If quota is not negative, ensure overage fields are zero and limit flag is false
+                             active_period.overage_credits = 0.0
+                             active_period.overage_cost = 0.0
+                             active_period.has_reached_limit = False
+                             print(f"[BILLING_DEBUG] finalize_run: Final quota remaining is non-negative ({active_period.quota_remaining}). No overage.")
+                        # --- END FINAL OVERAGE CALCULATION ---
+
+                        session.add(active_period)
+                        print(f"[BILLING_DEBUG] Updated billing period quotas with app margin: +{quota_difference} credits. Final overage calculated.")
+
                     # Add user to session for update
                     session.add(user)
                     print(f"[BILLING_DEBUG] Updated user credits balance to: {user.credits_balance}")
@@ -705,6 +873,8 @@ class BillingService(Service):
                     "llm_cost": usage_record.llm_cost,
                     "tools_cost": usage_record.tools_cost,
                     "kb_cost": usage_record.kb_cost,
+                    "app_margin": usage_record.app_margin,
+                    "base_cost": original_cost,
                     "total_cost": usage_record.total_cost,
                     "created_at": usage_record.created_at.isoformat(),
                     "llm_usage": [
@@ -741,11 +911,12 @@ class BillingService(Service):
                     summary["quota_remaining"] = active_period.quota_remaining
                     summary["overage_credits"] = active_period.overage_credits
                     summary["overage_cost"] = active_period.overage_cost
-                    print(f"[BILLING_DEBUG] Added quota info to summary: used={active_period.quota_used}, remaining={active_period.quota_remaining}")
+                    summary["has_reached_limit"] = active_period.has_reached_limit
+                    print(f"[BILLING_DEBUG] Added quota info to summary: used={active_period.quota_used}, remaining={active_period.quota_remaining}, has_reached_limit={active_period.has_reached_limit}")
                 
                 # Log the summary for debugging
-                logger.info(f"Run {run_id} finalized with cost: {usage_record.total_cost} credits")
-                print(f"[BILLING_DEBUG] Finalized run with total cost: {usage_record.total_cost} credits")
+                logger.info(f"Run {run_id} finalized with cost: {usage_record.total_cost} credits (includes {app_margin} app margin)")
+                print(f"[BILLING_DEBUG] Finalized run with total cost: {usage_record.total_cost} credits (includes {app_margin} app margin)")
                 print(f"[BILLING_DEBUG] finalize_run completed successfully")
                 
                 return summary
@@ -831,7 +1002,10 @@ class BillingService(Service):
                         "start_date": active_period.start_date.isoformat() if active_period else None,
                         "end_date": active_period.end_date.isoformat() if active_period else None,
                         "quota_used": active_period.quota_used if active_period else 0,
-                        "quota_remaining": active_period.quota_remaining if active_period else 0
+                        "quota_remaining": active_period.quota_remaining if active_period else 0,
+                        "rollover_credits": active_period.rollover_credits if active_period else 0,
+                        "base_quota": (active_period.quota_used + active_period.quota_remaining - active_period.rollover_credits) if active_period else 0,
+                        "total_quota": (active_period.quota_used + active_period.quota_remaining) if active_period else 0
                     }
                 }
                 
@@ -911,6 +1085,7 @@ class BillingService(Service):
                             status="active",
                             quota_used=0.0,
                             quota_remaining=1000.0,  # Default 1000 credits
+                            rollover_credits=0.0,    # No rollover for first period
                             subscription_plan_id=user.subscription_plan_id
                         )
                         
@@ -1081,3 +1256,55 @@ class BillingService(Service):
         # If we get here, no record was found with any method
         print(f"[BILLING_DEBUG] _find_usage_record: No usage record found for run_id: {run_id} after all checks.")
         return None 
+
+    async def renew_billing_period(self, billing_period_id: UUID) -> Optional[BillingPeriod]:
+        """Renew a billing period and handle credit rollover if applicable."""
+        try:
+            from langflow.services.deps import session_scope
+            
+            async with session_scope() as session:
+                # Get the current billing period
+                current_period = await session.get(BillingPeriod, billing_period_id)
+                if not current_period:
+                    logger.error(f"Billing period not found: {billing_period_id}")
+                    return None
+                    
+                # Mark the current period as completed
+                current_period.status = "completed"
+                session.add(current_period)
+                
+                # Get the user and subscription plan
+                user = await session.get(User, current_period.user_id)
+                plan = None
+                if current_period.subscription_plan_id:
+                    plan = await session.get(SubscriptionPlan, current_period.subscription_plan_id)
+                
+                # Calculate new period dates
+                from datetime import datetime, timezone, timedelta
+                now = datetime.now(timezone.utc)
+                start_date = current_period.end_date + timedelta(seconds=1)
+                end_date = start_date + (current_period.end_date - current_period.start_date)
+                
+                # Calculate rollover credits
+                rollover_credits = 0.0
+                if plan and plan.allows_rollover and current_period.quota_remaining > 0:
+                    rollover_credits = current_period.quota_remaining
+                    logger.info(f"Rolling over {rollover_credits} credits to next period for user {current_period.user_id}")
+                
+                # Create a new billing period
+                new_period = await self.create_billing_period(
+                    session,
+                    current_period.user_id,
+                    start_date,
+                    end_date,
+                    current_period.subscription_plan_id,
+                    rollover_credits=rollover_credits,
+                    overage_limit_usd=current_period.overage_limit_usd,
+                    is_overage_limited=current_period.is_overage_limited
+                )
+                
+                return new_period
+                
+        except Exception as e:
+            logger.error(f"Error renewing billing period: {e}")
+            return None 

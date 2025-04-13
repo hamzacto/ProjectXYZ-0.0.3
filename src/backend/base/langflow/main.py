@@ -6,12 +6,12 @@ import warnings
 from contextlib import asynccontextmanager
 from http import HTTPStatus
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, AsyncGenerator
 from urllib.parse import urlencode
 
 import anyio
 import httpx
-from fastapi import FastAPI, HTTPException, Request, Response, status
+from fastapi import FastAPI, HTTPException, Request, Response, status, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -34,9 +34,11 @@ from langflow.interface.components import get_and_cache_all_types_dict
 from langflow.interface.utils import setup_llm_caching
 from langflow.logging.logger import configure
 from langflow.middleware import ContentSizeLimitMiddleware
-from langflow.services.deps import get_queue_service, get_settings_service, get_telemetry_service, get_db_service, get_session
+from langflow.services.deps import get_queue_service, get_settings_service, get_telemetry_service, get_db_service, get_session, session_scope
 from langflow.services.email.service import get_email_service
 from langflow.services.utils import initialize_services, teardown_services
+from langflow.services.manager import service_manager
+from langflow.services.schema import ServiceType
 
 if TYPE_CHECKING:
     from tempfile import TemporaryDirectory
@@ -126,6 +128,15 @@ def get_lifespan(*, fix_migration=False, version=None):
             from langflow.services.limiter.service import init_limiter
             await init_limiter()
             
+            # Start billing cycle manager
+            try:
+                from langflow.services.billing.cycle_manager import get_billing_cycle_manager
+                billing_cycle_manager = get_billing_cycle_manager()
+                await billing_cycle_manager.start()
+                logger.info("Started billing cycle manager")
+            except Exception as exc:
+                logger.error(f"Failed to start billing cycle manager: {exc}")
+            
             setup_llm_caching()
             await initialize_super_user_if_needed()
             temp_dirs, bundles_components_paths = await load_bundles_with_error_handling()
@@ -147,6 +158,16 @@ def get_lifespan(*, fix_migration=False, version=None):
         finally:
             # Clean shutdown
             logger.info("Cleaning up resources...")
+            
+            # Stop billing cycle manager
+            try:
+                from langflow.services.billing.cycle_manager import get_billing_cycle_manager
+                billing_cycle_manager = get_billing_cycle_manager()
+                await billing_cycle_manager.stop()
+                logger.info("Stopped billing cycle manager")
+            except Exception as exc:
+                logger.error(f"Failed to stop billing cycle manager: {exc}")
+                
             await teardown_services()
             await logger.complete()
             temp_dir_cleanups = [asyncio.to_thread(temp_dir.cleanup) for temp_dir in temp_dirs]

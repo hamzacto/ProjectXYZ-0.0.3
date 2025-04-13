@@ -21,6 +21,7 @@ from langflow.api.v1 import (
     slack_integrations_router,
     hubspot_integrations_router,
     billing_debug_router,
+    billing_router,
 )
 from langflow.api.v2 import files_router as files_router_v2
 
@@ -54,3 +55,4 @@ router.include_router(slack_integrations_router)
 router.include_router(hubspot_integrations_router)
 router.include_router(flow_wizard_metadata_router)
 router.include_router(billing_debug_router)
+router.include_router(billing_router)

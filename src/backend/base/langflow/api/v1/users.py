@@ -2,7 +2,7 @@ from typing import Annotated
 from uuid import UUID
 import re
 from email_validator import validate_email, EmailNotValidError
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy import func
@@ -24,9 +24,10 @@ from langflow.services.deps import get_settings_service
 from langflow.services.email.service import get_email_service
 from jose import JWTError, jwt
 from langflow.services.limiter.service import password_reset_limiter, email_verification_limiter, registration_limiter
-from langflow.services.billing.utils import create_default_subscription_plans
+from langflow.services.database.models.billing.utils import create_default_subscription_plans
 from langflow.services.database.models.billing import SubscriptionPlan
 from loguru import logger
+
 router = APIRouter(tags=["Users"], prefix="/users")
 
 # Add PasswordResetRequest model
@@ -55,9 +56,9 @@ async def add_user(
     try:
         # Get or create default subscription plans asynchronously
         plans = await create_default_subscription_plans(session)
-        free_plan = plans.get("free")
+        free_plan = plans.get("Pro")
         if not free_plan:
-            raise HTTPException(status_code=500, detail="Default 'free' subscription plan not found.")
+            raise HTTPException(status_code=500, detail="Default 'Pro' subscription plan not found.")
 
         # Prepare user data dictionary including defaults
         user_data = user.model_dump()
@@ -82,6 +83,43 @@ async def add_user(
         folder = await get_or_create_default_folder(session, new_user.id)
         if not folder:
             raise HTTPException(status_code=500, detail="Error creating default folder")
+        
+        # Create initial billing period for the user
+        try:
+            from langflow.services.billing.cycle_manager import get_billing_cycle_manager
+            from langflow.services.database.models.billing.models import BillingPeriod
+            
+            now = datetime.now(timezone.utc)
+            end_date = now + timedelta(days=30)  # Standard 30-day period
+            
+            # Create the billing period record
+            billing_period = BillingPeriod(
+                user_id=new_user.id,
+                start_date=now,
+                end_date=end_date,
+                subscription_plan_id=free_plan.id,
+                status="active",
+                quota_used=0.0,
+                quota_remaining=free_plan.monthly_quota_credits,
+                overage_credits=0.0,
+                overage_cost=0.0,
+                is_plan_change=False,
+                previous_plan_id=None,
+                invoiced=False
+            )
+            
+            session.add(billing_period)
+            await session.commit()
+            logger.info(f"Created initial billing period for new user {new_user.id}")
+            
+            # Additional statistics logging for the new user
+            logger.info(f"New user registered: {new_user.username}, Plan: {free_plan.name}, " 
+                        f"Initial Credits: {free_plan.monthly_quota_credits}")
+            
+        except Exception as billing_error:
+            logger.error(f"Error creating initial billing period: {billing_error}")
+            # Continue with registration even if billing period creation fails
+            # This ensures the user can still be created, and billing will be set up later
         
         # Send verification email using JWT token
         email_service = get_email_service()

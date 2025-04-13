@@ -86,7 +86,9 @@ class SubscriptionPlan(SQLModel, table=True):
     features: dict = Field(sa_column=Column(JSON, nullable=False))
     allowed_premium_tools: dict = Field(sa_column=Column(JSON, nullable=False))
     overage_price_per_credit: float = Field(default=0.0)
+    default_overage_limit_usd: float = Field(default=20.0)  # Default overage limit for this plan
     allows_overage: bool = Field(default=False)
+    allows_rollover: bool = Field(default=False)  # Whether this plan allows credit rollover
     trial_days: int = Field(default=0)
     is_active: bool = Field(default=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -108,8 +110,12 @@ class BillingPeriod(SQLModel, table=True):
     quota_override: Optional[float] = Field(default=None)
     quota_used: float = Field(default=0.0)
     quota_remaining: float = Field(default=0.0)
+    rollover_credits: float = Field(default=0.0)  # Credits rolled over from previous period
     overage_credits: float = Field(default=0.0)
     overage_cost: float = Field(default=0.0)
+    overage_limit_usd: float = Field(default=20.0)  # Default $20 overage limit in USD
+    is_overage_limited: bool = Field(default=True)  # Whether overage limiting is enabled
+    has_reached_limit: bool = Field(default=False)  # Whether the user has reached their overage limit
     is_plan_change: bool = Field(default=False)
     previous_plan_id: Optional[UUID] = Field(default=None)
     invoiced: bool = Field(default=False)
@@ -133,6 +139,7 @@ class UsageRecord(SQLModel, table=True):
     llm_cost: float = Field(default=0.0)
     tools_cost: float = Field(default=0.0)
     kb_cost: float = Field(default=0.0)
+    app_margin: float = Field(default=0.0)  # 20% app margin
     total_cost: float = Field(default=0.0)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     billing_period_id: Optional[UUID] = Field(default=None, foreign_key="billingperiod.id")

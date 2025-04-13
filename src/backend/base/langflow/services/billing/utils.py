@@ -285,130 +285,78 @@ async def change_subscription_plan(
     return new_period
 
 
-async def create_default_subscription_plans(session: AsyncSession) -> Dict[str, SubscriptionPlan]:
-    """Create default subscription plans if they don't exist."""
-    # Check if any plans exist
-    existing_plans_result = await session.exec(select(SubscriptionPlan))
-    existing_plans = existing_plans_result.all()
-    if existing_plans:
-        return {plan.name: plan for plan in existing_plans}
+async def renew_billing_period(
+    billing_period_id: UUID, 
+    session: AsyncSession
+) -> Optional[BillingPeriod]:
+    """
+    Renews a billing period by completing the current one and creating a new one.
+    Handles credit rollover if applicable.
     
-    # Create default plans
-    plans = {
-        "free": SubscriptionPlan(
-            name="Free",
-            description="Basic plan with limited resources",
-            monthly_quota_credits=10.0,
-            max_flows=3,
-            max_flow_runs_per_day=10,
-            max_concurrent_flows=1,
-            max_kb_storage_mb=5,
-            max_kbs_per_user=1,
-            max_kb_entries_per_kb=100,
-            max_tokens_per_kb_entry=1000,
-            max_kb_queries_per_day=10,
-            allowed_models=["gpt-3.5-turbo"],
-            allowed_premium_tools={},
-            price_monthly_usd=0.0,
-            price_yearly_usd=0.0,
-            features={"basic_templates": True, "community_support": True},
-            overage_price_per_credit=0.0,
-            allows_overage=False,
-            trial_days=0,
-            is_active=True,
-        ),
-        "starter": SubscriptionPlan(
-            name="Starter",
-            description="Good for individuals and small projects",
-            monthly_quota_credits=100.0,
-            max_flows=10,
-            max_flow_runs_per_day=50,
-            max_concurrent_flows=2,
-            max_kb_storage_mb=100,
-            max_kbs_per_user=5,
-            max_kb_entries_per_kb=500,
-            max_tokens_per_kb_entry=2000,
-            max_kb_queries_per_day=100,
-            allowed_models=["gpt-3.5-turbo", "gpt-4", "claude-3-sonnet"],
-            allowed_premium_tools={},
-            price_monthly_usd=19.99,
-            price_yearly_usd=199.90,
-            features={
-                "priority_support": True,
-                "all_templates": True,
-                "community_support": True,
-            },
-            overage_price_per_credit=0.01,
-            allows_overage=True,
-            trial_days=14,
-            is_active=True,
-        ),
-        "pro": SubscriptionPlan(
-            name="Professional",
-            description="For professional users with higher demands",
-            monthly_quota_credits=500.0,
-            max_flows=50,
-            max_flow_runs_per_day=0,  # unlimited
-            max_concurrent_flows=5,
-            max_kb_storage_mb=500,
-            max_kbs_per_user=20,
-            max_kb_entries_per_kb=1000,
-            max_tokens_per_kb_entry=4000,
-            max_kb_queries_per_day=0,  # unlimited
-            allowed_models=["gpt-3.5-turbo", "gpt-4", "gpt-4o", "claude-3-sonnet", "claude-3-opus"],
-            allowed_premium_tools={"google_search": True, "alpha_vantage": True},
-            price_monthly_usd=49.99,
-            price_yearly_usd=499.90,
-            features={
-                "priority_support": True,
-                "all_templates": True,
-                "custom_domain": True,
-                "advanced_analytics": True
-            },
-            overage_price_per_credit=0.01,
-            allows_overage=True,
-            trial_days=14,
-            is_active=True,
-        ),
-        "enterprise": SubscriptionPlan(
-            name="Enterprise",
-            description="For organizations with advanced needs",
-            monthly_quota_credits=2000.0,
-            max_flows=0,  # unlimited
-            max_flow_runs_per_day=0,  # unlimited
-            max_concurrent_flows=20,
-            max_kb_storage_mb=5000,
-            max_kbs_per_user=0,
-            max_kb_entries_per_kb=0,
-            max_tokens_per_kb_entry=0,
-            max_kb_queries_per_day=0,  # unlimited
-            allowed_models=[],  # all models
-            allowed_premium_tools={},
-            price_monthly_usd=199.99,
-            price_yearly_usd=1999.90,
-            features={
-                "priority_support": True,
-                "all_templates": True,
-                "custom_domain": True,
-                "advanced_analytics": True,
-                "sso_integration": True,
-                "dedicated_support": True
-            },
-            allows_overage=True,
-            overage_price_per_credit=0.008,
-            trial_days=30,
-            is_active=True,
-        )
-    }
+    Args:
+        billing_period_id: UUID of the billing period to renew
+        session: Database session
+        
+    Returns:
+        New BillingPeriod object or None if error
+    """
+    # Get current billing period
+    current_period = (await session.exec(
+        select(BillingPeriod).where(BillingPeriod.id == billing_period_id)
+    )).first()
     
-    # Add plans to the session
-    for plan in plans.values():
-        session.add(plan)
+    if not current_period:
+        return None
     
+    # Mark current period as completed
+    current_period.status = "completed"
+    session.add(current_period)
+    
+    # Get user
+    user = (await session.exec(select(User).where(User.id == current_period.user_id))).first()
+    if not user:
+        return None
+    
+    # Get subscription plan
+    plan = None
+    if user.subscription_plan_id:
+        plan = (await session.exec(select(SubscriptionPlan).where(
+            SubscriptionPlan.id == user.subscription_plan_id
+        ))).first()
+    
+    if not plan:
+        return None
+    
+    # Calculate new period dates (starting from the end of the current period)
+    # Add 1 second to avoid overlap
+    new_start = current_period.end_date + timedelta(seconds=1)
+    new_end = new_start + (current_period.end_date - current_period.start_date)
+    
+    # Initialize rollover credits
+    rollover_credits = 0.0
+    
+    # Handle credit rollover if the plan allows it
+    if plan.allows_rollover and current_period.quota_remaining > 0:
+        rollover_credits = current_period.quota_remaining
+    
+    # Create new billing period
+    new_period = BillingPeriod(
+        user_id=current_period.user_id,
+        subscription_plan_id=user.subscription_plan_id,
+        start_date=new_start,
+        end_date=new_end,
+        status="active",
+        rollover_credits=rollover_credits,
+        quota_used=0.0,
+        quota_remaining=plan.monthly_quota_credits + rollover_credits,
+        overage_limit_usd=plan.default_overage_limit_usd,
+        is_overage_limited=True,
+        has_reached_limit=False
+    )
+    
+    session.add(new_period)
     await session.commit()
+    await session.refresh(new_period)
     
-    # Refresh plans to get their IDs
-    for plan in plans.values():
-        await session.refresh(plan)
-    
-    return plans 
+    return new_period
+

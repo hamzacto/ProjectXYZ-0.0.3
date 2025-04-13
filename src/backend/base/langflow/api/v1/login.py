@@ -11,7 +11,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from google_auth_oauthlib.flow import Flow as GoogleFlow
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+from sqlalchemy import select
 
 from langflow.api.utils import DbSession
 from langflow.api.v1.schemas import Token
@@ -28,6 +29,8 @@ from langflow.services.database.models.user.crud import get_user_by_id, get_user
 from langflow.services.database.models.user.model import User, UserCreate
 from langflow.services.deps import get_settings_service, get_variable_service
 from langflow.services.limiter.service import login_limiter
+from langflow.services.database.models.billing.utils import create_default_subscription_plans
+from langflow.services.database.models.billing.models import BillingPeriod
 
 router = APIRouter(tags=["Login"])
 logger = logging.getLogger(__name__)
@@ -456,28 +459,98 @@ async def google_auth_callback(
             # Generate a secure random password with high entropy
             password = secrets.token_urlsafe(16)
             
-            new_user = User(
-                username=username,
-                email=email,
-                password=get_password_hash(password),
-                is_active=True,
-                is_verified=True,
-                profile_image="Space/028-alien.svg",
-                oauth_provider="google",  # Set oauth provider for Google accounts
-                last_login_at=datetime.now(timezone.utc)  # Set last_login_at to ensure the user is fully activated
-            )
-            
-            # Save the new user
-            db.add(new_user)
-            await db.commit()
-            await db.refresh(new_user)
-            user = new_user
-            
-            # Create default folder for new user
-            _ = await get_or_create_default_folder(db, user.id)
-            await get_variable_service().initialize_user_variables(user.id, db)
-            
-            logger.info(f"Created new user via Google OAuth: {user.username}")
+            try:
+                # Get or create default subscription plans
+                plans = await create_default_subscription_plans(db)
+                free_plan = next((plan for plan in plans.values() if plan.name == "Pro"), None)
+                
+                if not free_plan:
+                    logger.error("Default free subscription plan not found when creating OAuth user")
+                    raise HTTPException(status_code=500, detail="Error setting up user account")
+                
+                # Create user with billing information
+                new_user = User(
+                    username=username,
+                    email=email,
+                    password=get_password_hash(password),
+                    is_active=True,
+                    is_verified=True,
+                    profile_image="Space/028-alien.svg",
+                    oauth_provider="google",  # Set oauth provider for Google accounts
+                    last_login_at=datetime.now(timezone.utc),
+                    # Add billing and subscription fields
+                    subscription_plan_id=free_plan.id,
+                    subscription_status="active",
+                    subscription_start_date=datetime.now(timezone.utc),
+                    credits_balance=free_plan.monthly_quota_credits,
+                    trial_start_date=datetime.now(timezone.utc),
+                    trial_end_date=datetime.now(timezone.utc) + timedelta(days=free_plan.trial_days) if free_plan.trial_days > 0 else None
+                )
+                
+                # Save the new user
+                db.add(new_user)
+                await db.commit()
+                await db.refresh(new_user)
+                user = new_user
+                
+                # Create default folder for new user
+                _ = await get_or_create_default_folder(db, user.id)
+                await get_variable_service().initialize_user_variables(user.id, db)
+                
+                # Create initial billing period for the user
+                now = datetime.now(timezone.utc)
+                end_date = now + timedelta(days=30)  # Standard 30-day period
+                
+                # Create the billing period record
+                billing_period = BillingPeriod(
+                    user_id=user.id,
+                    start_date=now,
+                    end_date=end_date,
+                    subscription_plan_id=free_plan.id,
+                    status="active",
+                    quota_used=0.0,
+                    quota_remaining=free_plan.monthly_quota_credits,
+                    overage_credits=0.0,
+                    overage_cost=0.0,
+                    is_plan_change=False,
+                    previous_plan_id=None,
+                    invoiced=False
+                )
+                
+                db.add(billing_period)
+                await db.commit()
+                logger.info(f"Created initial billing period for new OAuth user {user.id}")
+                
+                logger.info(f"Created new user via Google OAuth: {user.username} with subscription plan {free_plan.name}")
+            except Exception as e:
+                # Handle any errors during user creation and billing setup
+                await db.rollback()
+                logger.error(f"Error creating OAuth user with billing setup: {str(e)}")
+                # Create user without billing as fallback to ensure login works
+                new_user = User(
+                    username=username,
+                    email=email,
+                    password=get_password_hash(password),
+                    is_active=True,
+                    is_verified=True,
+                    profile_image="Space/028-alien.svg",
+                    oauth_provider="google",
+                    last_login_at=datetime.now(timezone.utc),
+                    subscription_status="trial"
+                )
+                db.add(new_user)
+                await db.commit()
+                await db.refresh(new_user)
+                user = new_user
+                
+                # Create default folder as essential functionality
+                try:
+                    _ = await get_or_create_default_folder(db, user.id)
+                    await get_variable_service().initialize_user_variables(user.id, db)
+                except Exception as folder_error:
+                    logger.error(f"Error creating default folder for OAuth user: {str(folder_error)}")
+                
+                logger.warning(f"Created OAuth user {user.username} without billing setup due to error")
         else:
             # Update existing user's last_login_at
             user.last_login_at = datetime.now(timezone.utc)
@@ -487,6 +560,63 @@ async def google_auth_callback(
             db.add(user)
             await db.commit()
             await db.refresh(user)
+            
+            # Make sure user has a subscription plan and billing setup
+            if not user.subscription_plan_id or user.credits_balance is None or user.credits_balance == 0:
+                logger.info(f"Fixing billing setup for existing OAuth user: {user.email}")
+                
+                try:
+                    # Create default subscription plans if they don't exist
+                    plans = await create_default_subscription_plans(db)
+                    free_plan = next((plan for plan in plans.values() if plan.name == "Free"), None)
+                    
+                    if free_plan:
+                        # Update user with subscription details
+                        now = datetime.now(timezone.utc)
+                        user.subscription_plan_id = free_plan.id
+                        user.subscription_status = "active"
+                        user.subscription_start_date = now
+                        user.credits_balance = free_plan.monthly_quota_credits
+                        
+                        db.add(user)
+                        await db.commit()
+                        await db.refresh(user)
+                        
+                        # Check if user has an active billing period
+                        billing_period_query = select(BillingPeriod).where(
+                            BillingPeriod.user_id == user.id,
+                            BillingPeriod.status == "active"
+                        )
+                        
+                        has_active_period = (await db.exec(billing_period_query)).first()
+                        
+                        # Create billing period if none exists
+                        if not has_active_period:
+                            end_date = now + timedelta(days=free_plan.duration_days)
+                            
+                            billing_period = BillingPeriod(
+                                user_id=user.id,
+                                start_date=now,
+                                end_date=end_date,
+                                subscription_plan_id=free_plan.id,
+                                status="active",
+                                quota_used=0.0,
+                                quota_remaining=free_plan.monthly_quota_credits,
+                                overage_credits=0.0,
+                                overage_cost=0.0,
+                                is_plan_change=False,
+                                previous_plan_id=None,
+                                invoiced=False
+                            )
+                            
+                            db.add(billing_period)
+                            await db.commit()
+                            logger.info(f"Created missing billing period for existing OAuth user: {user.email}")
+                    else:
+                        logger.error(f"Free plan not found when fixing billing for existing user: {user.email}")
+                except Exception as billing_error:
+                    logger.error(f"Error fixing billing for existing OAuth user: {str(billing_error)}")
+                    # Continue with login even if billing setup fails - we'll try again next login
             
         # Create tokens for user
         tokens = await create_user_tokens(user_id=user.id, db=db, update_last_login=True)

@@ -18,15 +18,28 @@ LLM_MARKUP_PERCENTAGE = 0.2  # 20% markup on LLM costs
 
 # Model costs per 1K tokens in USD (estimated)
 MODEL_COSTS = {
-    "gpt-3.5-turbo": {"input": 0.0005, "output": 0.0015},
-    "gpt-4": {"input": 0.03, "output": 0.06},
-    "gpt-4o": {"input": 0.01, "output": 0.03},
+    #OpenAI models
+    "gpt-3.5-turbo": {"input": 0.0005, "output": 0.0015}, #correct
+    "gpt-4": {"input": 0.03, "output": 0.06}, #correct
+    "gpt-4o": {"input": 0.0025, "output": 0.01}, #correct
+    "gpt-4o-mini": {"input": 0.00015, "output": 0.0006}, #correct
+    "gpt-4-turbo": {"input": 0.01, "output": 0.03}, #correct
+    "gpt-4.5": {"input": 0.075, "output": 0.15}, #correct
+    "gpt-3.5-turbo-0125": {"input": 0.0005, "output": 0.0015}, #correct
+    "openai-o1": {"input": 0.015, "output": 0.06}, #correct
+    "openai-o3-mini": {"input": 0.0011, "output": 0.0044}, #correct
+    #Gemini models
+    "gemini-2.5-pro": {"input": 0.00125, "output": 0.01},  # For <= 200k tokens
+    "gemini-2.0-flash": {"input": 0.0001, "output": 0.0004},  # text/image/video
+    "gemini-2.0-flash-lite": {"input": 0.000075, "output": 0.0003},
+    "gemini-1.5-flash": {"input": 0.000075, "output": 0.0003},  # For <= 128k tokens
+    "gemini-1.5-flash-8b": {"input": 0.0000375, "output": 0.00015},  # For <= 128k tokens
+    "gemini-1.5-pro": {"input": 0.00125, "output": 0.005},  # For <= 128k tokens
+    #Anthropic models
     "claude-3-opus-20240229": {"input": 0.015, "output": 0.075},
     "claude-3-sonnet-20240229": {"input": 0.003, "output": 0.015},
     "anthropic.claude-3-haiku-20240307": {"input": 0.00025, "output": 0.00125},
-    # Add more models as needed
 }
-
 # Default model cost if specific model not found
 DEFAULT_MODEL_COST = {"input": 0.001, "output": 0.002}
 
