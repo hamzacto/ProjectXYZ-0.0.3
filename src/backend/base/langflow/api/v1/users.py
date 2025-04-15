@@ -56,9 +56,9 @@ async def add_user(
     try:
         # Get or create default subscription plans asynchronously
         plans = await create_default_subscription_plans(session)
-        free_plan = plans.get("Pro")
+        free_plan = plans.get("free")
         if not free_plan:
-            raise HTTPException(status_code=500, detail="Default 'Pro' subscription plan not found.")
+            raise HTTPException(status_code=500, detail="Default 'free' subscription plan not found.")
 
         # Prepare user data dictionary including defaults
         user_data = user.model_dump()

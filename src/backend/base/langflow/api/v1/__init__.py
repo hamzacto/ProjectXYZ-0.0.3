@@ -19,6 +19,7 @@ from langflow.api.v1.hubspot_integrations import router as hubspot_integrations_
 from langflow.api.v1.flow_wizard_metadata import router as flow_wizard_metadata_router
 from langflow.api.v1.billing_debug import router as billing_debug_router
 from langflow.api.v1.billing import router as billing_router
+from langflow.api.v1.stripe import router as stripe_router
 __all__ = [
     "api_key_router",
     "chat_router",
@@ -41,4 +42,5 @@ __all__ = [
     "flow_wizard_metadata_router",
     "billing_debug_router",
     "billing_router",
+    "stripe_router",
 ]

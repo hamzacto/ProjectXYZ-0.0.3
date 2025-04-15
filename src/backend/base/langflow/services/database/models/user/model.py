@@ -36,6 +36,11 @@ class User(SQLModel, table=True):  # type: ignore[call-arg]
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     last_login_at: datetime | None = Field(default=None, nullable=True)
     
+    # Stripe Integration Fields
+    stripe_customer_id: Optional[str] = Field(default=None, index=True, nullable=True)
+    stripe_subscription_id: Optional[str] = Field(default=None, index=True, nullable=True)
+    stripe_default_payment_method_id: Optional[str] = Field(default=None, nullable=True)
+    
     # Billing and quota fields
     credits_balance: Optional[float] = Field(default=0.0, nullable=True)
     billing_day: Optional[int] = Field(default=1, nullable=True)

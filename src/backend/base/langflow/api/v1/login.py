@@ -462,7 +462,7 @@ async def google_auth_callback(
             try:
                 # Get or create default subscription plans
                 plans = await create_default_subscription_plans(db)
-                free_plan = next((plan for plan in plans.values() if plan.name == "Pro"), None)
+                free_plan = next((plan for plan in plans.values() if plan.name == "Free"), None)
                 
                 if not free_plan:
                     logger.error("Default free subscription plan not found when creating OAuth user")

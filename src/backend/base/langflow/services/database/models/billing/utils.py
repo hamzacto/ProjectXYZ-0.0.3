@@ -81,7 +81,7 @@ async def create_default_subscription_plans(session) -> Dict[str, Any]:
         "pro": {
             "name": "Pro",
             "description": "Ideal for creators and solo builders",
-            "monthly_quota_credits": 5,
+            "monthly_quota_credits": 18000,
             "max_flows": 10,
             "max_flow_runs_per_day": 50,
             "max_concurrent_flows": 2,
@@ -183,8 +183,8 @@ async def create_default_subscription_plans(session) -> Dict[str, Any]:
             "trial_days": 14,
             "is_active": True
         },
-        "business": {
-            "name": "Business",
+        "Enterprise": {
+            "name": "Enterprise",
             "description": "Custom infrastructure, support, and scalability",
             "monthly_quota_credits": 180000,
             "max_flows": 0,  # Unlimited

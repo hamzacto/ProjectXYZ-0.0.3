@@ -41,6 +41,34 @@ class UsageSummaryResponse(BaseModel):
     current_period: Dict[str, Any]
 
 
+class SubscriptionPlanResponse(BaseModel):
+    id: str
+    name: str
+    description: Optional[str] = None
+    monthly_quota_credits: float
+    max_flows: int
+    max_flow_runs_per_day: int
+    max_concurrent_flows: int
+    max_kb_storage_mb: int
+    max_kbs_per_user: int
+    max_kb_entries_per_kb: int
+    max_tokens_per_kb_entry: int
+    max_kb_queries_per_day: int
+    allowed_models: Dict[str, bool]
+    price_monthly_usd: float
+    price_yearly_usd: float
+    features: Dict[str, bool]
+    allowed_premium_tools: Dict[str, bool]
+    overage_price_per_credit: float
+    default_overage_limit_usd: float
+    allows_overage: bool
+    allows_rollover: bool
+    trial_days: int
+    is_active: bool
+    stripe_product_id: Optional[str] = None
+    stripe_default_price_id: Optional[str] = None
+
+
 # # API endpoints
 # @router.get("/usage/summary", response_model=UsageSummaryResponse)
 # async def get_usage_summary(
@@ -58,6 +86,57 @@ class UsageSummaryResponse(BaseModel):
 #         raise HTTPException(status_code=500, detail=summary["error"])
     
 #     return summary
+
+
+@router.get("/subscription-plans", response_model=List[SubscriptionPlanResponse])
+async def get_subscription_plans(
+    session: DbSession,
+    include_inactive: bool = False,
+) -> List[Dict[str, Any]]:
+    """Get all subscription plans available for purchase."""
+    try:
+        # Query for all active subscription plans
+        if include_inactive:
+            plans_query = select(SubscriptionPlan)
+        else:
+            plans_query = select(SubscriptionPlan).where(SubscriptionPlan.is_active == True)
+        
+        plans = (await session.exec(plans_query)).all()
+        
+        # Format plans for response
+        result = []
+        for plan in plans:
+            result.append({
+                "id": str(plan.id),
+                "name": plan.name,
+                "description": plan.description,
+                "monthly_quota_credits": plan.monthly_quota_credits,
+                "max_flows": plan.max_flows,
+                "max_flow_runs_per_day": plan.max_flow_runs_per_day,
+                "max_concurrent_flows": plan.max_concurrent_flows,
+                "max_kb_storage_mb": plan.max_kb_storage_mb,
+                "max_kbs_per_user": plan.max_kbs_per_user,
+                "max_kb_entries_per_kb": plan.max_kb_entries_per_kb,
+                "max_tokens_per_kb_entry": plan.max_tokens_per_kb_entry,
+                "max_kb_queries_per_day": plan.max_kb_queries_per_day,
+                "allowed_models": plan.allowed_models,
+                "price_monthly_usd": plan.price_monthly_usd,
+                "price_yearly_usd": plan.price_yearly_usd,
+                "features": plan.features,
+                "allowed_premium_tools": plan.allowed_premium_tools,
+                "overage_price_per_credit": plan.overage_price_per_credit,
+                "default_overage_limit_usd": plan.default_overage_limit_usd,
+                "allows_overage": plan.allows_overage,
+                "allows_rollover": plan.allows_rollover,
+                "trial_days": plan.trial_days,
+                "is_active": plan.is_active,
+                "stripe_product_id": plan.stripe_product_id,
+                "stripe_default_price_id": plan.stripe_default_price_id
+            })
+        
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error retrieving subscription plans: {str(e)}")
 
 
 @router.get("/periods/current", response_model=BillingPeriodResponse)

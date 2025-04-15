@@ -143,8 +143,70 @@ def get_lifespan(*, fix_migration=False, version=None):
             get_settings_service().settings.components_path.extend(bundles_components_paths)
             all_types_dict = await get_and_cache_all_types_dict(get_settings_service())
             await create_or_update_starter_projects(all_types_dict)
+                
             telemetry_service.start()
             await load_flows_from_directory()
+            
+            # Create default subscription plans - moved here to ensure database is fully initialized
+            try:
+                from langflow.services.database.models.billing.utils import create_default_subscription_plans
+                from asyncio import sleep
+                from sqlmodel import text
+                from langflow.services.deps import session_scope
+                
+                # Use a retry mechanism with exponential backoff
+                max_retries = 3
+                retry_delay = 1.0  # Start with 1 second delay
+                last_exception = None
+                
+                for attempt in range(max_retries):
+                    try:
+                        async with session_scope() as session:
+                            # First check if the table exists
+                            try:
+                                # Check if table exists
+                                result = await session.exec(text("SELECT name FROM sqlite_master WHERE type='table' AND name='subscriptionplan'"))
+                                table_exists = result.first() is not None
+                                if not table_exists:
+                                    logger.warning("subscriptionplan table doesn't exist yet, waiting...")
+                                    if attempt < max_retries - 1:
+                                        await sleep(retry_delay)
+                                        retry_delay *= 2
+                                        continue
+                                    else:
+                                        logger.error("subscriptionplan table not created after max retries")
+                                        break
+                            except Exception as table_check_exc:
+                                logger.warning(f"Error checking for subscriptionplan table: {table_check_exc}")
+                                # Continue anyway, the create_default_subscription_plans might handle it
+                            
+                            # Table exists or we couldn't check, try to create/update plans
+                            plans = await create_default_subscription_plans(session)
+                            logger.info(f"Created/updated {len(plans)} subscription plans")
+                            break  # Success, exit the retry loop
+                    except Exception as retry_exc:
+                        last_exception = retry_exc
+                        logger.warning(f"Attempt {attempt+1}/{max_retries} to create subscription plans failed: {retry_exc}")
+                        if attempt < max_retries - 1:  # Don't sleep on the last attempt
+                            await sleep(retry_delay)
+                            retry_delay *= 2  # Exponential backoff
+                else:  # This runs if no break occurred in the for loop
+                    if last_exception:
+                        logger.error(f"Failed to create default subscription plans after {max_retries} attempts: {last_exception}")
+            except Exception as exc:
+                logger.error(f"Failed to create default subscription plans: {exc}")
+                
+            # Load Stripe product IDs from environment variables
+            try:
+                from langflow.services.billing.utils import load_stripe_product_ids_from_env
+                
+                async with session_scope() as session:
+                    result = await load_stripe_product_ids_from_env(session)
+                    if result["updated"] > 0:
+                        logger.info(f"Updated {result['updated']} subscription plans with Stripe IDs from environment variables")
+            except Exception as exc:
+                logger.error(f"Failed to load Stripe product IDs from environment variables: {exc}")
+            
             queue_service = get_queue_service()
             if not queue_service.is_started():  # Start if not already started
                 queue_service.start()

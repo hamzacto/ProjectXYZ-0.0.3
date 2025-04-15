@@ -92,10 +92,102 @@ class SubscriptionPlan(SQLModel, table=True):
     trial_days: int = Field(default=0)
     is_active: bool = Field(default=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    
+
+    # Stripe Integration Fields
+    stripe_product_id: Optional[str] = Field(default=None, index=True, nullable=True)
+    stripe_default_price_id: Optional[str] = Field(default=None, index=True, nullable=True)
+
     # Relationships
     users: list["User"] = Relationship(back_populates="subscription_plan")
     billing_periods: list["BillingPeriod"] = Relationship(back_populates="subscription_plan")
+    
+    @classmethod
+    async def ensure_stripe_price_ids(cls, session) -> dict:
+        """
+        For testing purposes: Ensure all subscription plans have a 
+        stripe_default_price_id by creating test prices in Stripe.
+        
+        Only works in test mode with test API keys.
+        
+        Returns:
+            dict: Mapping of plan IDs to price IDs
+        """
+        import stripe
+        from loguru import logger
+        
+        try:
+            # Get settings to check if we're in test mode
+            from langflow.services.deps import get_settings_service
+            settings_service = get_settings_service()
+            
+            if not settings_service.settings.stripe_enabled:
+                logger.warning("Stripe not enabled, skipping price ID setup")
+                return {}
+                
+            api_key = settings_service.settings.stripe_api_key
+            if not api_key or not api_key.startswith("sk_test_"):
+                logger.warning("Not using test API key, skipping price ID setup")
+                return {}
+                
+            # Initialize Stripe
+            stripe.api_key = api_key
+            
+            result = {}
+            # Get all active plans
+            from sqlmodel import select
+            plans_query = select(cls).where(cls.is_active == True)
+            plans = (await session.exec(plans_query)).all()
+            
+            for plan in plans:
+                try:
+                    # Skip if already has price ID
+                    if plan.stripe_default_price_id:
+                        result[str(plan.id)] = plan.stripe_default_price_id
+                        continue
+                        
+                    # Create product if needed
+                    if not plan.stripe_product_id:
+                        product = stripe.Product.create(
+                            name=plan.name,
+                            description=plan.description or f"{plan.name} plan",
+                            active=True,
+                            metadata={
+                                "plan_id": str(plan.id)
+                            }
+                        )
+                        plan.stripe_product_id = product.id
+                    
+                    # Create monthly price
+                    monthly_price = stripe.Price.create(
+                        product=plan.stripe_product_id,
+                        unit_amount=int(plan.price_monthly_usd * 100),  # Convert to cents
+                        currency="usd",
+                        recurring={
+                            "interval": "month"
+                        },
+                        metadata={
+                            "plan_id": str(plan.id),
+                            "period": "monthly"
+                        }
+                    )
+                    
+                    # Set as default price
+                    plan.stripe_default_price_id = monthly_price.id
+                    session.add(plan)
+                    
+                    # Store in result
+                    result[str(plan.id)] = monthly_price.id
+                    logger.info(f"Created Stripe price for plan {plan.name}: {monthly_price.id}")
+                    
+                except Exception as e:
+                    logger.error(f"Error creating Stripe price for plan {plan.name}: {str(e)}")
+            
+            await session.commit()
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error setting up Stripe prices: {str(e)}")
+            return {}
 
 
 class BillingPeriod(SQLModel, table=True):
@@ -224,10 +316,30 @@ class Invoice(SQLModel, table=True):
     status: str = Field(default="pending")
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     paid_at: Optional[datetime] = Field(default=None)
-    
+
+    # Stripe Integration Fields
+    stripe_invoice_id: Optional[str] = Field(default=None, index=True, nullable=True)
+    stripe_payment_intent_id: Optional[str] = Field(default=None, index=True, nullable=True) # Or stripe_charge_id depending on your Stripe flow
+    stripe_invoice_url: Optional[str] = Field(default=None, nullable=True)
+
     # Relationships
     user: "User" = Relationship(back_populates="invoices")
     billing_period: "BillingPeriod" = Relationship(back_populates="invoices")
+
+
+class StripeEvent(SQLModel, table=True):
+    """Model for storing Stripe webhook events."""
+    __tablename__ = "stripeevent"
+    
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    stripe_event_id: str = Field(index=True, unique=True)
+    type: str = Field(index=True)  # e.g., 'invoice.paid', 'customer.subscription.updated'
+    api_version: Optional[str] = Field(default=None, nullable=True)
+    data: dict = Field(sa_column=Column(JSON, nullable=False)) # The full event payload
+    status: str = Field(default="received", index=True) # e.g., 'received', 'processing', 'processed', 'failed'
+    error_message: Optional[str] = Field(default=None, nullable=True)
+    received_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    processed_at: Optional[datetime] = Field(default=None, nullable=True)
 
 
 # Define relationships

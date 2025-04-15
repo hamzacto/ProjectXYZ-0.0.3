@@ -101,13 +101,6 @@ async def get_quota(
                     # Check for allows_rollover attribute (for backward compatibility)
                     plan_allows_rollover = plan.allows_rollover if hasattr(plan, 'allows_rollover') else False
                     
-                    # Fallback to name-based detection if field doesn't exist yet
-                    if not hasattr(plan, 'allows_rollover'):
-                        plan_name = plan.name.lower() if plan and plan.name else ""
-                        plan_allows_rollover = ("pro" in plan_name or 
-                                               "premium" in plan_name or 
-                                               "business" in plan_name or 
-                                               "enterprise" in plan_name)
             
             # Get rollover credits amount (may be 0 if the field doesn't exist yet)
             rollover_credits = billing_period.rollover_credits if hasattr(billing_period, 'rollover_credits') else 0.0
@@ -165,13 +158,6 @@ async def get_subscription(
             # Check for allows_rollover attribute (for backward compatibility)
             allows_rollover = plan.allows_rollover if hasattr(plan, 'allows_rollover') else False
             
-            # Fallback to name-based detection if field doesn't exist yet
-            if not hasattr(plan, 'allows_rollover'):
-                plan_name = plan.name.lower() if plan and plan.name else ""
-                allows_rollover = ("pro" in plan_name or 
-                                  "premium" in plan_name or 
-                                  "business" in plan_name or 
-                                  "enterprise" in plan_name)
                 
             return SubscriptionPlanResponse(
                 id=str(plan.id),

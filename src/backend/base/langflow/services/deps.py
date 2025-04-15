@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from langflow.services.telemetry.service import TelemetryService
     from langflow.services.tracing.service import TracingService
     from langflow.services.variable.service import VariableService
+    from langflow.services.stripe.service import StripeService
 
 
 def get_service(service_type: ServiceType, default=None):
@@ -252,3 +253,13 @@ def get_queue_service() -> JobQueueService:
 def get_email_service():
     from langflow.services.email.service import get_email_service as get_es
     return get_es()
+
+
+def get_stripe_service() -> "StripeService":
+    """Get the Stripe service.
+
+    Returns:
+        StripeService: The Stripe service.
+    """
+    from langflow.services.stripe.factory import StripeServiceFactory
+    return get_service(ServiceType.STRIPE_SERVICE, StripeServiceFactory())

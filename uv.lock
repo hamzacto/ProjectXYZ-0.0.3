@@ -4455,6 +4455,7 @@ dependencies = [
     { name = "setuptools" },
     { name = "spider-client" },
     { name = "sqlmodel" },
+    { name = "stripe" },
     { name = "tiktoken" },
     { name = "typer" },
     { name = "uncurl" },
@@ -4623,6 +4624,7 @@ requires-dist = [
     { name = "setuptools", specifier = ">=70,<76.0.0" },
     { name = "spider-client", specifier = ">=0.0.27,<1.0.0" },
     { name = "sqlmodel", specifier = "==0.0.22" },
+    { name = "stripe", specifier = ">=6.0.0,<7.0.0" },
     { name = "tiktoken", specifier = ">=0.7.0" },
     { name = "typer", specifier = ">=0.13.0,<1.0.0" },
     { name = "types-google-cloud-ndb", marker = "extra == 'dev'", specifier = ">=2.2.0.0" },
@@ -8420,6 +8422,19 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/85/ad/430fb60d90e1d112a62ff57bdd1f286ec73a2a0331272febfddd21f330e1/StrEnum-0.4.15.tar.gz", hash = "sha256:878fb5ab705442070e4dd1929bb5e2249511c0bcf2b0eeacf3bcd80875c82eff", size = 23384 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/81/69/297302c5f5f59c862faa31e6cb9a4cd74721cd1e052b38e464c5b402df8b/StrEnum-0.4.15-py3-none-any.whl", hash = "sha256:a30cda4af7cc6b5bf52c8055bc4bf4b2b6b14a93b574626da33df53cf7740659", size = 8851 },
+]
+
+[[package]]
+name = "stripe"
+version = "6.7.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "requests" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/74/65/61aaf2aa723bd42bf89776302117be5066e629b5514a0a7f1330c312ca47/stripe-6.7.0.tar.gz", hash = "sha256:2794ccc4b4c97070d1cab4385e1d2aad65937b4437b75cc1faf7d67dda8199f4", size = 293207 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/68/fc/aba3608d9576e18524d12ce26ca5775b33ad3f458585037e17c1ca5e74cd/stripe-6.7.0-py2.py3-none-any.whl", hash = "sha256:a453d6daa633f656297a9323c736fdcb53164418d643fdc30499a6d32ad7933c", size = 320433 },
 ]
 
 [[package]]

@@ -222,6 +222,20 @@ class Settings(BaseSettings):
     mcp_server_enable_progress_notifications: bool = False
     """If set to False, Langflow will not send progress notifications in the MCP server."""
 
+    # Stripe Integration
+    stripe_enabled: bool = False
+    """Whether Stripe payment processing is enabled."""
+    stripe_api_key: str | None = None
+    """Stripe API key for the application."""
+    stripe_webhook_secret: str | None = None
+    """Stripe webhook secret for verifying webhook events."""
+    stripe_public_key: str | None = None
+    """Stripe publishable key for frontend components."""
+    stripe_product_base_id: str | None = None
+    """Base Stripe product ID to use when creating subscription plans."""
+    stripe_test_mode: bool = True
+    """Whether to use Stripe test mode (test API keys) or production mode."""
+
     event_delivery: Literal["polling", "streaming"] = "streaming"
     """How to deliver build events to the frontend. Can be 'polling' or 'streaming'."""
 

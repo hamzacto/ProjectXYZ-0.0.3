@@ -45,6 +45,8 @@ import GmailIntegrationsDetailPage from "./pages/GmailIntegrationsDetailPage/ind
 import SlackIntegrationsDetailPage from "./pages/SlackIntegrationsDetailPage/index";
 import HubSpotIntegrationsDetailPage from "./pages/HubSpotIntegrationsDetailPage/index";
 import ChatPage from "./pages/Chat_Page";
+import CheckoutPage from "./pages/CheckoutPage";
+import BillingSuccessPage from "./pages/BillingSuccessPage";
 
 const AdminPage = lazy(() => import("./pages/AdminPage"));
 const LoginAdminPage = lazy(() => import("./pages/AdminPage/LoginPage"));
@@ -224,6 +226,11 @@ const router = createBrowserRouter(
                 />
                 <Route path="chat/:id/">
                   <Route path="" element={<PlaygroundPage />} />
+                </Route>
+                <Route path="billing">
+                  <Route path="plans" element={<CheckoutPage />} />
+                  <Route path="success" element={<BillingSuccessPage />} />
+                  <Route path="cancel" element={<DashboardWrapperPage />} />
                 </Route>
               </Route>
               <Route path="flow/:id/">

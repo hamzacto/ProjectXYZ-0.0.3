@@ -66,12 +66,6 @@ async def test_rollover_for_user(user_id: UUID):
             
         # Check if plan allows rollover
         allows_rollover = plan.allows_rollover if hasattr(plan, 'allows_rollover') else False
-        if not hasattr(plan, 'allows_rollover'):
-            plan_name = plan.name.lower() if plan and plan.name else ""
-            allows_rollover = ("pro" in plan_name or 
-                              "premium" in plan_name or 
-                              "business" in plan_name or 
-                              "enterprise" in plan_name)
         
         print("\nUser Information:")
         print(f"  Email: {user.email}")
