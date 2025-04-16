@@ -75,6 +75,8 @@
     "react-pdf": "^9.0.0",
     "react-router-dom": "^6.23.1",
     "react-syntax-highlighter": "^15.5.0",
+    "react-virtualized-auto-sizer": "^1.0.26",
+    "react-window": "^1.8.11",
     "react18-json-view": "^0.2.8",
     "reactflow": "^11.11.3",
     "rehype-mathjax": "^4.0.3",

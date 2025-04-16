@@ -3,7 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import useDeleteFlow from "@/hooks/flows/use-delete-flow";
 import { useAddComponent } from "@/hooks/useAddComponent";
-import { DragEventHandler, forwardRef, useRef, useState } from "react";
+import { DragEventHandler, forwardRef, useRef, useState, memo, useCallback } from "react";
 import IconComponent, {
     ForwardedIconComponent,
 } from "../../../../../../components/common/genericIconComponent";
@@ -24,7 +24,7 @@ import {
 } from "../../../../../../utils/reactflowUtils";
 import { cn, removeCountFromString } from "../../../../../../utils/utils";
 
-export const ToolsLinkSidebarDraggableComponent = forwardRef(
+export const ToolsLinkSidebarDraggableComponent = memo(forwardRef(
     (
         {
             sectionName,
@@ -78,23 +78,24 @@ export const ToolsLinkSidebarDraggableComponent = forwardRef(
         const [cursorPos, setCursorPos] = useState({ x: 0, y: 0 });
         const popoverRef = useRef<HTMLDivElement>(null);
 
-        // Determine which service is needed based on the tool name
-        const getServiceName = () => {
+        // Memoized: Determine which service is needed based on the tool name
+        const getServiceName = useCallback(() => {
             const normalizedName = display_name.toLowerCase();
             if (normalizedName.includes('hubspot')) return 'HubSpot';
             if (normalizedName.includes('slack')) return 'Slack';
             if (normalizedName.includes('gmail') || normalizedName.includes('google')) return 'Gmail';
             return null;
-        };
+        }, [display_name]);
 
         const serviceName = getServiceName();
         
-        const getWarningTooltip = () => {
+        // Memoized: Get warning tooltip
+        const getWarningTooltip = useCallback(() => {
             if (isConnected || !serviceName) return null;
             return `This tool requires ${serviceName} integration. Please connect your ${serviceName} account in integrations settings.`;
-        };
+        }, [isConnected, serviceName]);
 
-        const handlePointerDown = (e) => {
+        const handlePointerDown = useCallback((e) => {
             if (!open) {
                 const rect = popoverRef.current?.getBoundingClientRect() ?? {
                     left: 0,
@@ -102,11 +103,12 @@ export const ToolsLinkSidebarDraggableComponent = forwardRef(
                 };
                 setCursorPos({ x: e.clientX - rect.left, y: e.clientY - rect.top });
             }
-        };
+        }, [open]);
 
-        const addComponentHandler = () => {
+        // Memoized: Add component handler
+        const addComponentHandler = useCallback(() => {
             addTool(apiClass);  // Add tool to the list
-        };
+        }, [addTool, apiClass]);
 
         function handleSelectChange(value: string) {
             switch (value) {
@@ -126,12 +128,13 @@ export const ToolsLinkSidebarDraggableComponent = forwardRef(
             }
         }
 
-        const handleKeyDown = (e) => {
+        // Memoized: handleKeyDown
+        const handleKeyDown = useCallback((e) => {
             if (e.key === "Enter" || e.key === " ") {
                 e.preventDefault();
                 addComponent(apiClass, itemName);
             }
-        };
+        }, [addComponent, apiClass, itemName]);
 
         return (
             <Select
@@ -266,6 +269,6 @@ export const ToolsLinkSidebarDraggableComponent = forwardRef(
             </Select>
         );
     },
-);
+));
 
 export default ToolsLinkSidebarDraggableComponent;

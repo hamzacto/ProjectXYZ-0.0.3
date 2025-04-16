@@ -136,7 +136,7 @@ export const ToolsLinkCategoryDisclosure = memo(function ToolsLinkCategoryDisclo
   const isServiceConnected = useCallback((serviceName: string) => {
     // If error occurred or still loading, assume services are connected to avoid 
     // showing warnings unnecessarily
-    if (isLoading || hasError || !connectedServices.length) return true;
+    if (isLoading || hasError) return true;
     
     // Normalize service names for easier comparison
     const normalizedServiceName = serviceName.toLowerCase();
