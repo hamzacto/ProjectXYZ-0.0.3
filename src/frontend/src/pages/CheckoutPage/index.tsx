@@ -15,6 +15,8 @@ import { LANGFLOW_ACCESS_TOKEN } from "@/constants/constants";
 import { Cookies } from "react-cookie";
 import ConfirmationModal from "@/modals/confirmationModal";
 import ForwardedIconComponent from "@/components/common/genericIconComponent";
+import { useConfirmPlanSelection } from "@/controllers/API/queries/users/use-post-confirm-plan";
+import useAuthStore from "@/stores/authStore";
 
 // CSS for the animated gradient badge
 const animatedGradientBadgeStyle = `
@@ -189,6 +191,8 @@ export default function CheckoutPage(): JSX.Element {
   const navigate = useCustomNavigate();
   const setErrorData = useAlertStore((state) => state.setErrorData);
   const cookies = new Cookies();
+  const setHasChosenPlan = useAuthStore((state) => state.setHasChosenPlan);
+  const { mutate: confirmPlan, isPending: isConfirmingPlan } = useConfirmPlanSelection();
 
   // Check authentication before proceeding
   useEffect(() => {
@@ -533,6 +537,23 @@ export default function CheckoutPage(): JSX.Element {
     }
   };
 
+  // Function to handle choosing the Free plan
+  const handleChooseFreePlan = () => {
+    confirmPlan(undefined, {
+      onSuccess: () => {
+        setHasChosenPlan(true);
+        navigate("/home");
+      },
+      onError: (error) => {
+        console.error("Error confirming free plan selection:", error);
+        setErrorData({
+          title: "Error Saving Choice",
+          list: ["Could not confirm your selection. Please try again."],
+        });
+      },
+    });
+  };
+
   // Loading state
   if (isLoadingPlans) {
     return (
@@ -875,13 +896,17 @@ export default function CheckoutPage(): JSX.Element {
                               <Button 
                                 variant={styling.buttonVariant}
                                 className={cn("w-full", styling.buttonClass, "flex items-center justify-center")}
-                                onClick={() => {
-                                  if (plan.name === "Free") {
-                                    navigate("/login");
-                                  }
-                                }}
+                                onClick={handleChooseFreePlan}
+                                disabled={isConfirmingPlan}
                               >
-                                Choose later
+                                {isConfirmingPlan ? (
+                                  <>
+                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                    Confirming...
+                                  </>
+                                ) : (
+                                  "Choose Later"
+                                )}
                               </Button>
                             </div>
                           </div>

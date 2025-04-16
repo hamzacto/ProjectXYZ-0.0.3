@@ -31,6 +31,9 @@ class StripeService(Service):
         self._retry_delay = 1  # Initial retry delay in seconds
         self._max_retries = 3  # Maximum number of retries
         self._logger = logger.bind(service="stripe")
+        self._request_semaphore = asyncio.Semaphore(5)  # Limit to 5 concurrent requests
+        self._rate_limit_bucket = {}  # Simple token bucket for endpoints
+        self._requests_per_second = 25  # Default Stripe rate limit is 25 requests/second
     
     def _print(self, message: str) -> None:
         """Print a message to the console and log it at info level."""
@@ -100,45 +103,121 @@ class StripeService(Service):
         """
         if not self._initialized and not self._api_key:
             raise ValueError("Stripe service not initialized or API key not configured")
+        
+        # Rate limit by acquiring semaphore
+        async with self._request_semaphore:
+            # Apply rate limiting based on endpoint
+            endpoint = getattr(func, "__name__", "unknown")
+            await self._apply_rate_limit(endpoint)
             
-        retries = 0
-        last_error = None
-        
-        while retries <= self._max_retries:
-            try:
-                # Stripe SDK is synchronous, so run in thread pool
-                loop = asyncio.get_event_loop()
-                return await loop.run_in_executor(None, lambda: func(*args, **kwargs))
-                
-            except stripe.error.RateLimitError as e:
-                retries += 1
-                last_error = e
-                if retries <= self._max_retries:
-                    # Exponential backoff with jitter
-                    delay = self._retry_delay * (2 ** (retries - 1))
-                    self._logger.warning(f"Rate limited by Stripe, retrying in {delay}s... (attempt {retries}/{self._max_retries})")
-                    await asyncio.sleep(delay)
+            retries = 0
+            last_error = None
+            
+            while retries <= self._max_retries:
+                try:
+                    # Stripe SDK is synchronous, so run in thread pool
+                    loop = asyncio.get_event_loop()
+                    return await loop.run_in_executor(None, lambda: func(*args, **kwargs))
                     
-            except stripe.error.APIConnectionError as e:
-                retries += 1
-                last_error = e
-                if retries <= self._max_retries:
-                    delay = self._retry_delay * (2 ** (retries - 1))
-                    self._logger.warning(f"Connection error to Stripe API, retrying in {delay}s... (attempt {retries}/{self._max_retries})")
-                    await asyncio.sleep(delay)
-                
-            except stripe.error.StripeError as e:
-                # Other Stripe errors are not retryable
-                self._logger.error(f"Stripe API error: {str(e)}")
-                raise
-                
-            except Exception as e:
-                self._logger.error(f"Unexpected error in Stripe API call: {str(e)}")
-                raise
+                except stripe.error.RateLimitError as e:
+                    retries += 1
+                    last_error = e
+                    if retries <= self._max_retries:
+                        # Exponential backoff with jitter
+                        import random
+                        jitter = random.uniform(0, 0.5)  # Add randomness to avoid thundering herd
+                        delay = (self._retry_delay * (2 ** (retries - 1))) + jitter
+                        self._logger.warning(f"Rate limited by Stripe, retrying in {delay:.2f}s... (attempt {retries}/{self._max_retries})")
+                        await asyncio.sleep(delay)
+                        # Reduce rate for this endpoint
+                        self._adjust_rate_limit(endpoint, increase=False)
+                        
+                except stripe.error.APIConnectionError as e:
+                    retries += 1
+                    last_error = e
+                    if retries <= self._max_retries:
+                        import random
+                        jitter = random.uniform(0, 0.5)
+                        delay = (self._retry_delay * (2 ** (retries - 1))) + jitter
+                        self._logger.warning(f"Connection error to Stripe API, retrying in {delay:.2f}s... (attempt {retries}/{self._max_retries})")
+                        await asyncio.sleep(delay)
+                    
+                except stripe.error.StripeError as e:
+                    # Other Stripe errors are not retryable
+                    self._logger.error(f"Stripe API error: {str(e)}")
+                    raise
+                    
+                except Exception as e:
+                    self._logger.error(f"Unexpected error in Stripe API call: {str(e)}")
+                    raise
+            
+            # If we get here, we've exhausted our retries
+            self._logger.error(f"Failed to call Stripe API after {self._max_retries} retries: {str(last_error)}")
+            raise last_error
+
+    async def _apply_rate_limit(self, endpoint: str) -> None:
+        """
+        Apply rate limiting for a specific endpoint using a token bucket algorithm.
+        Waits if necessary to stay under rate limits.
         
-        # If we get here, we've exhausted our retries
-        self._logger.error(f"Failed to call Stripe API after {self._max_retries} retries: {str(last_error)}")
-        raise last_error
+        Args:
+            endpoint: The API endpoint being called
+        """
+        now = datetime.now(timezone.utc).timestamp()
+        
+        # Initialize bucket for this endpoint if it doesn't exist
+        if endpoint not in self._rate_limit_bucket:
+            self._rate_limit_bucket[endpoint] = {
+                "tokens": self._requests_per_second,
+                "last_refill": now,
+                "tokens_per_second": self._requests_per_second / 10  # Limit per endpoint
+            }
+        
+        bucket = self._rate_limit_bucket[endpoint]
+        
+        # Refill tokens based on time elapsed
+        time_passed = now - bucket["last_refill"]
+        bucket["last_refill"] = now
+        bucket["tokens"] = min(
+            bucket["tokens"] + time_passed * bucket["tokens_per_second"],
+            bucket["tokens_per_second"]  # Max tokens = rate per second
+        )
+        
+        # If we don't have a full token, wait
+        if bucket["tokens"] < 1:
+            wait_time = (1 - bucket["tokens"]) / bucket["tokens_per_second"]
+            self._logger.debug(f"Rate limiting {endpoint}, waiting {wait_time:.2f}s")
+            await asyncio.sleep(wait_time)
+            bucket["tokens"] = 0  # Reset after waiting
+        else:
+            # Use one token
+            bucket["tokens"] -= 1
+
+    def _adjust_rate_limit(self, endpoint: str, increase: bool = False) -> None:
+        """
+        Dynamically adjust rate limits based on success/failure patterns.
+        
+        Args:
+            endpoint: The API endpoint to adjust
+            increase: Whether to increase (True) or decrease (False) the rate
+        """
+        if endpoint not in self._rate_limit_bucket:
+            return
+            
+        bucket = self._rate_limit_bucket[endpoint]
+        
+        if increase:
+            # Gradually increase rate if successful
+            bucket["tokens_per_second"] = min(
+                bucket["tokens_per_second"] * 1.1,  # 10% increase
+                self._requests_per_second / 5  # Cap at 1/5 of global limit
+            )
+        else:
+            # Reduce rate on failure
+            bucket["tokens_per_second"] = max(
+                bucket["tokens_per_second"] * 0.5,  # 50% decrease
+                1  # Minimum of 1 request per second
+            )
 
     # Customer Management
     
@@ -193,6 +272,8 @@ class StripeService(Service):
                     )
                     
                     self._logger.info(f"Created Stripe customer for user {user.id}: {customer.id}")
+                    # Adjust rate limit upward on success
+                    self._adjust_rate_limit("Customer.create", increase=True)
                     return customer.id
                 except stripe.error.StripeError as se:
                     retry_count += 1

@@ -53,6 +53,7 @@ class User(SQLModel, table=True):  # type: ignore[call-arg]
     subscription_status: Optional[str] = Field(default="trial", nullable=True)
     subscription_start_date: Optional[datetime] = Field(default=None, nullable=True)
     subscription_end_date: Optional[datetime] = Field(default=None, nullable=True)
+    has_chosen_plan: bool = Field(default=False)
     
     # Trial tracking
     trial_start_date: Optional[datetime] = Field(default=None, nullable=True)
@@ -120,6 +121,7 @@ class UserRead(SQLModel):
     subscription_status: str = Field()
     credits_balance: Optional[float] = Field(nullable=True)
     trial_end_date: Optional[datetime] = Field(nullable=True)
+    has_chosen_plan: bool = Field(default=False)
 
 
 class UserUpdate(SQLModel):
@@ -136,3 +138,4 @@ class UserUpdate(SQLModel):
     subscription_plan_id: Optional[UUID] = None
     subscription_status: Optional[str] = None
     credits_balance: Optional[float] = None
+    has_chosen_plan: bool | None = None

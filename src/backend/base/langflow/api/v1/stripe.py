@@ -5,7 +5,7 @@ from loguru import logger
 from typing import Dict, Any, Optional
 from uuid import UUID
 import stripe
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from langflow.api.utils import CurrentActiveUser, DbSession
 from langflow.services.deps import get_stripe_service
@@ -677,6 +677,7 @@ async def process_checkout_completed(checkout_data: Dict[str, Any], session: DbS
         user.subscription_status = "active"
         user.subscription_plan_id = UUID(plan_id)
         user.subscription_start_date = datetime.now(timezone.utc)
+        user.has_chosen_plan = True
         
         # If coming from trial, mark as converted
         if user.trial_end_date:
@@ -786,4 +787,171 @@ async def init_stripe_test_data(
         raise HTTPException(
             status_code=500,
             detail=f"Error initializing Stripe test data: {str(e)}"
+        )
+
+
+@router.post("/cancel-subscription", status_code=200)
+async def cancel_subscription(
+    user: CurrentActiveUser,
+    session: DbSession,
+    immediately: bool = False  # Whether to cancel immediately or at period end
+):
+    """
+    Cancel the current user's subscription.
+    
+    By default, the subscription will remain active until the end of the current billing period.
+    If immediately=True, the subscription will be canceled immediately with no refund.
+    After cancellation, the user will be switched to the Free plan.
+    """
+    if not user:
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication required"
+        )
+        
+    try:
+        # Check if user has an active subscription
+        if not user.stripe_subscription_id:
+            raise HTTPException(
+                status_code=400,
+                detail="No active subscription found"
+            )
+            
+        if user.subscription_status in ["canceled", "incomplete_expired"]:
+            raise HTTPException(
+                status_code=400,
+                detail="Subscription is already canceled"
+            )
+            
+        # Get Stripe service
+        stripe_service = get_stripe_service()
+        
+        # Ensure Stripe service is initialized
+        if not getattr(stripe_service, "_initialized", False):
+            await stripe_service.initialize()
+        
+        # Find the Free plan in the database
+        from langflow.services.database.models.billing.models import SubscriptionPlan
+        free_plan_query = select(SubscriptionPlan).where(
+            SubscriptionPlan.price_monthly_usd == 0.0,
+            SubscriptionPlan.is_active == True
+        )
+        free_plan = (await session.exec(free_plan_query)).first()
+        
+        if not free_plan:
+            logger.error("No Free plan found in the database")
+            raise HTTPException(
+                status_code=500,
+                detail="Error finding Free plan"
+            )
+        
+        # Cancel subscription in Stripe
+        cancel_params = {}
+        if not immediately:
+            # Cancel at period end instead of immediately
+            cancel_params["at_period_end"] = True
+            
+        try:
+            # Use the cancel_subscription method if immediately=True
+            if immediately:
+                success = await stripe_service.cancel_subscription(user)
+                if not success:
+                    raise HTTPException(
+                        status_code=500,
+                        detail="Failed to cancel subscription"
+                    )
+            else:
+                # For at_period_end cancellation, we need to use update instead of delete
+                await stripe_service._make_request(
+                    stripe.Subscription.modify,
+                    user.stripe_subscription_id,
+                    cancel_at_period_end=True
+                )
+            
+            # Update user status in our database
+            if immediately:
+                user.subscription_status = "canceled"
+                
+                # Switch to Free plan immediately if canceling immediately
+                prev_plan_id = user.subscription_plan_id
+                user.subscription_plan_id = free_plan.id
+                
+                # Update user's credit balance to match Free plan quota
+                user.credits_balance = free_plan.monthly_quota_credits
+                
+                # Create a new billing period with the Free plan
+                from langflow.services.billing.cycle_manager import get_billing_cycle_manager
+                billing_manager = get_billing_cycle_manager()
+                
+                # Mark any existing active periods as inactive
+                active_period_query = select(BillingPeriod).where(
+                    BillingPeriod.user_id == user.id,
+                    BillingPeriod.status == "active"
+                )
+                active_period = (await session.exec(active_period_query)).first()
+                
+                if active_period:
+                    active_period.status = "inactive"
+                    active_period.is_plan_change = True
+                    session.add(active_period)
+                
+                # Create new Free plan billing period
+                await billing_manager.create_new_billing_period(
+                    session=session,
+                    user=user,
+                    plan=free_plan,
+                    previous_period=active_period if active_period else None,
+                    previous_plan_id=prev_plan_id
+                )
+                
+            else:
+                # When canceling at period end, Stripe sets status to "active" with cancel_at_period_end=true
+                user.subscription_status = "pending_cancellation"
+                
+                # For end-of-period cancellation, the plan will be switched after current period ends
+                # This happens in the BillingCycleManager's process_expired_billing_periods method
+                # We'll store the Free plan ID for later use
+                from langflow.services.deps import get_session_scope
+                async with get_session_scope() as metadata_session:
+                    # Store the free plan ID in subscription end metadata
+                    metadata_key = f"cancel_to_free_plan_{user.id}"
+                    free_plan_metadata = {
+                        "free_plan_id": str(free_plan.id),
+                        "expires_at": (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
+                    }
+                    await metadata_session.execute(
+                        f"INSERT INTO metadata (key, value) VALUES ('{metadata_key}', '{str(free_plan_metadata)}')"
+                    )
+                
+            session.add(user)
+            await session.commit()
+            
+            return {
+                "success": True,
+                "status": user.subscription_status,
+                "cancellation_type": "immediate" if immediately else "end_of_period",
+                "free_plan": {
+                    "id": str(free_plan.id),
+                    "name": free_plan.name,
+                    "credits": free_plan.monthly_quota_credits
+                },
+                "message": "Subscription has been canceled and switched to Free plan" if immediately else 
+                          "Subscription will be canceled at the end of the current billing period, then switched to Free plan"
+            }
+            
+        except stripe.error.StripeError as e:
+            logger.error(f"Stripe error canceling subscription: {str(e)}")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Stripe error: {str(e)}"
+            )
+            
+    except HTTPException:
+        # Pass through HTTP exceptions
+        raise
+    except Exception as e:
+        logger.error(f"Error canceling subscription: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error canceling subscription: {str(e)}"
         ) 

@@ -11,8 +11,9 @@ import { useCustomPrimaryLoading } from "@/customization/hooks/use-custom-primar
 import { useDarkStore } from "@/stores/darkStore";
 import useFlowsManagerStore from "@/stores/flowsManagerStore";
 import { useEffect } from "react";
-import { Outlet } from "react-router-dom";
+import { Outlet, useNavigate, useLocation } from "react-router-dom";
 import { LoadingPage } from "../LoadingPage";
+import useAuthStore from "@/stores/authStore";
 
 export function AppInitPage() {
   const dark = useDarkStore((state) => state.dark);
@@ -20,6 +21,10 @@ export function AppInitPage() {
   const isLoading = useFlowsManagerStore((state) => state.isLoading);
 
   const { isFetched: isLoaded } = useCustomPrimaryLoading();
+  const hasChosenPlan = useAuthStore((state) => state.has_chosen_plan);
+  const isLoadingUser = useAuthStore((state) => state.isLoadingUser);
+  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const navigate = useNavigate();
 
   const { isFetched } = useGetAutoLogin({ enabled: isLoaded });
   useGetVersionQuery({ enabled: isFetched });
@@ -47,6 +52,16 @@ export function AppInitPage() {
       document.getElementById("body")!.classList.add("dark");
     }
   }, [dark]);
+
+  useEffect(() => {
+    if (isAuthenticated && !isLoadingUser) {
+      if (!hasChosenPlan && location.pathname !== '/billing/plans') {
+        navigate("/billing/plans", { replace: true });
+      }
+    }
+  }, [isAuthenticated, isLoadingUser, hasChosenPlan, navigate, location.pathname]);
+
+  const showLoading = isLoading || !isFetched || !isExamplesFetched || !typesLoaded || (isAuthenticated && isLoadingUser);
 
   return (
     //need parent component with width and height

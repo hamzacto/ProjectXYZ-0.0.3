@@ -59,22 +59,38 @@ export function AuthProvider({ children }): React.ReactElement {
   }, []);
 
   function getUser() {
+    useAuthStore.getState().setIsLoadingUser(true);
     mutateLoggedUser(
       {},
       {
         onSuccess: async (user) => {
           setUserData(user);
           const isSuperUser = user!.is_superuser;
+          const hasChosenPlan = user!.has_chosen_plan;
           useAuthStore.getState().setIsAdmin(isSuperUser);
+          useAuthStore.getState().setHasChosenPlan(hasChosenPlan);
           checkHasStore();
           fetchApiData();
+          useAuthStore.getState().setIsLoadingUser(false);
         },
         onError: () => {
           setUserData(null);
+          useAuthStore.getState().setIsAdmin(false);
+          useAuthStore.getState().setHasChosenPlan(false);
+          useAuthStore.getState().setIsLoadingUser(false);
         },
       },
     );
   }
+
+  useEffect(() => {
+    if (accessToken) {
+      getUser();
+    }
+    else {
+      useAuthStore.getState().setIsLoadingUser(false);
+    }
+  }, [accessToken]);
 
   function login(
     newAccessToken: string,

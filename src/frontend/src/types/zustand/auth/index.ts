@@ -8,6 +8,8 @@ export interface AuthStoreType {
   autoLogin: boolean | null;
   apiKey: string | null;
   authenticationErrorCount: number;
+  has_chosen_plan: boolean;
+  isLoadingUser: boolean;
 
   setIsAdmin: (isAdmin: boolean) => void;
   setIsAuthenticated: (isAuthenticated: boolean) => void;
@@ -16,6 +18,8 @@ export interface AuthStoreType {
   setAutoLogin: (autoLogin: boolean) => void;
   setApiKey: (apiKey: string | null) => void;
   setAuthenticationErrorCount: (authenticationErrorCount: number) => void;
+  setHasChosenPlan: (has_chosen_plan: boolean) => void;
+  setIsLoadingUser: (isLoadingUser: boolean) => void;
   logout: () => Promise<void>;
   // setUserData: (userData: Users | null) => void;
   // setIsAdmin: (isAdmin: boolean) => void;

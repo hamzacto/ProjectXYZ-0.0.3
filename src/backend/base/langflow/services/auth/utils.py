@@ -246,11 +246,17 @@ async def create_user_longterm_token(db: AsyncSession) -> tuple[UUID, dict]:
 
     # Update: last_login_at
     await update_user_last_login_at(super_user.id, db)
+    
+    # Fetch user again to get has_chosen_plan (although it's likely false for superuser initially)
+    # This ensures consistency with the Token schema
+    user = await get_user_by_id(db, super_user.id)
+    has_chosen_plan = user.has_chosen_plan if user else False
 
     return super_user.id, {
         "access_token": access_token,
         "refresh_token": None,
         "token_type": "bearer",
+        "has_chosen_plan": has_chosen_plan,
     }
 
 
@@ -289,11 +295,22 @@ async def create_user_tokens(user_id: UUID, db: AsyncSession, *, update_last_log
     # Update: last_login_at
     if update_last_login:
         await update_user_last_login_at(user_id, db)
+        
+    # Fetch user to get has_chosen_plan status
+    user = await get_user_by_id(db, user_id)
+    if not user:
+        # This should ideally not happen if user_id is valid
+        logger.error(f"User not found when creating tokens for ID: {user_id}")
+        # Handle appropriately, maybe raise an error or return default false
+        has_chosen_plan = False
+    else:
+        has_chosen_plan = user.has_chosen_plan
 
     return {
         "access_token": access_token,
         "refresh_token": refresh_token,
         "token_type": "bearer",
+        "has_chosen_plan": has_chosen_plan,
     }
 
 

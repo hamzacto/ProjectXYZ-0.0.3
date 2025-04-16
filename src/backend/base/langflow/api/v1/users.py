@@ -360,6 +360,29 @@ async def reset_password(
         raise HTTPException(status_code=500, detail="Error resetting password")
 
 
+@router.post("/confirm-plan-selection", status_code=200)
+async def confirm_plan_selection(
+    user: CurrentActiveUser,
+    session: DbSession,
+):
+    """Mark that the user has acknowledged the plan selection process."""
+    try:
+        if user.has_chosen_plan:
+            # Optional: Return success even if already chosen to make it idempotent
+            return {"message": "Plan selection already confirmed."}
+
+        user.has_chosen_plan = True
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
+        logger.info(f"User {user.id} confirmed plan selection (chose Free plan initially).")
+        return {"message": "Plan selection confirmed successfully."}
+    except Exception as e:
+        await session.rollback()
+        logger.error(f"Error confirming plan selection for user {user.id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to confirm plan selection.")
+
+
 @router.get("/whoami", response_model=UserRead)
 async def read_current_user(
     current_user: CurrentActiveUser,

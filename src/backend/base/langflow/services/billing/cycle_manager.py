@@ -31,6 +31,8 @@ class BillingCycleManager:
         self._renewal_interval_hours = 24  # Check once per day by default
         # Lock for thread safety
         self._renewal_lock = asyncio.Lock()
+        # Semaphore for rate limiting API calls
+        self._api_semaphore = asyncio.Semaphore(10)  # Process at most 10 invoices concurrently
     
     async def start(self) -> None:
         """Start the automatic renewal background task."""
@@ -123,99 +125,13 @@ class BillingCycleManager:
                 
                 logger.info(f"Found {len(expired_periods)} expired billing periods to process")
                 
+                # Process periods with rate limiting
+                tasks = []
                 for period in expired_periods:
-                    try:
-                        user = await session.get(User, period.user_id)
-                        if not user:
-                            logger.error(f"User {period.user_id} not found for billing period {period.id}")
-                            stats["errors"] += 1
-                            stats["details"].append({
-                                "period_id": str(period.id),
-                                "user_id": str(period.user_id),
-                                "status": "error",
-                                "reason": "user_not_found"
-                            })
-                            continue
-                        
-                        # Generate invoice for the expired period
-                        if not period.invoiced:
-                            invoice_result = await self.generate_invoice_for_period(session, period, user)
-                            if invoice_result.get("success"):
-                                stats["invoiced"] += 1
-                                stats["details"].append({
-                                    "period_id": str(period.id),
-                                    "user_id": str(user.id),
-                                    "status": "invoiced",
-                                    "invoice_id": invoice_result.get("invoice_id"),
-                                    "amount": invoice_result.get("amount")
-                                })
-                            else:
-                                stats["details"].append({
-                                    "period_id": str(period.id),
-                                    "user_id": str(user.id),
-                                    "status": "invoice_failed",
-                                    "reason": invoice_result.get("error")
-                                })
-                        
-                        # Check if user subscription should continue
-                        if user.subscription_status != "active":
-                            # Mark expired period as inactive
-                            period.status = "inactive"
-                            session.add(period)
-                            stats["canceled"] += 1
-                            stats["details"].append({
-                                "period_id": str(period.id),
-                                "user_id": str(user.id),
-                                "status": "canceled",
-                                "reason": f"subscription_status={user.subscription_status}"
-                            })
-                            continue
-                        
-                        # Get subscription plan
-                        plan = None
-                        if user.subscription_plan_id:
-                            plan = await session.get(SubscriptionPlan, user.subscription_plan_id)
-                        
-                        if not plan:
-                            logger.error(f"Subscription plan not found for user {user.id}")
-                            stats["errors"] += 1
-                            stats["details"].append({
-                                "period_id": str(period.id),
-                                "user_id": str(user.id),
-                                "status": "error",
-                                "reason": "plan_not_found"
-                            })
-                            continue
-                        
-                        # Create new billing period
-                        await self.create_new_billing_period(
-                            session=session,
-                            user=user,
-                            plan=plan,
-                            previous_period=period
-                        )
-                        
-                        # Mark expired period as inactive
-                        period.status = "inactive"
-                        session.add(period)
-                        
-                        stats["renewed"] += 1
-                        stats["details"].append({
-                            "period_id": str(period.id),
-                            "user_id": str(user.id),
-                            "status": "renewed",
-                            "plan": plan.name
-                        })
-                        
-                    except Exception as e:
-                        logger.error(f"Error processing billing period {period.id}: {e}")
-                        stats["errors"] += 1
-                        stats["details"].append({
-                            "period_id": str(period.id),
-                            "user_id": str(period.user_id) if period else "unknown",
-                            "status": "error",
-                            "reason": str(e)
-                        })
+                    tasks.append(self._process_expired_period(session, period, stats))
+                
+                # Run tasks with concurrency control via semaphore
+                await asyncio.gather(*tasks)
         
         except Exception as e:
             logger.error(f"Error in process_expired_billing_periods: {e}")
@@ -223,6 +139,185 @@ class BillingCycleManager:
         
         logger.info(f"Completed billing period renewal: {stats['renewed']} renewed, {stats['invoiced']} invoiced, {stats['errors']} errors")
         return stats
+    
+    async def _process_expired_period(self, session, period, stats):
+        """
+        Process a single expired billing period with rate limiting.
+        
+        Args:
+            session: Database session
+            period: The billing period to process
+            stats: Statistics dictionary to update
+        """
+        # Use the semaphore to limit concurrent API calls
+        async with self._api_semaphore:
+            try:
+                user = await session.get(User, period.user_id)
+                if not user:
+                    logger.error(f"User {period.user_id} not found for billing period {period.id}")
+                    stats["errors"] += 1
+                    stats["details"].append({
+                        "period_id": str(period.id),
+                        "user_id": str(period.user_id),
+                        "status": "error",
+                        "reason": "user_not_found"
+                    })
+                    return
+                
+                # Generate invoice for the expired period
+                if not period.invoiced:
+                    invoice_result = await self.generate_invoice_for_period(session, period, user)
+                    if invoice_result.get("success"):
+                        stats["invoiced"] += 1
+                        stats["details"].append({
+                            "period_id": str(period.id),
+                            "user_id": str(user.id),
+                            "status": "invoiced",
+                            "invoice_id": invoice_result.get("invoice_id"),
+                            "amount": invoice_result.get("amount")
+                        })
+                    else:
+                        stats["details"].append({
+                            "period_id": str(period.id),
+                            "user_id": str(user.id),
+                            "status": "invoice_failed",
+                            "reason": invoice_result.get("error")
+                        })
+                
+                # Check if user subscription should continue or if it was pending cancellation
+                if user.subscription_status in ["canceled", "incomplete_expired"]:
+                    # Mark expired period as inactive
+                    period.status = "inactive"
+                    session.add(period)
+                    stats["canceled"] += 1
+                    stats["details"].append({
+                        "period_id": str(period.id),
+                        "user_id": str(user.id),
+                        "status": "canceled",
+                        "reason": f"subscription_status={user.subscription_status}"
+                    })
+                    return
+                elif user.subscription_status == "pending_cancellation":
+                    # User requested cancellation at period end - switch them to Free plan
+                    logger.info(f"User {user.id} subscription status is pending_cancellation, switching to Free plan")
+
+                    # Find the free plan
+                    free_plan_query = select(SubscriptionPlan).where(
+                        SubscriptionPlan.price_monthly_usd == 0.0,
+                        SubscriptionPlan.is_active == True
+                    )
+                    free_plan = (await session.exec(free_plan_query)).first()
+                    
+                    if not free_plan:
+                        logger.error(f"No Free plan found for user {user.id} whose subscription is pending cancellation")
+                        # Use the basic handling for canceled subscriptions
+                        period.status = "inactive"
+                        session.add(period)
+                        stats["canceled"] += 1
+                        stats["details"].append({
+                            "period_id": str(period.id),
+                            "user_id": str(user.id),
+                            "status": "error",
+                            "reason": "free_plan_not_found"
+                        })
+                        return
+                    
+                    # Store old plan ID before updating user
+                    old_plan_id = user.subscription_plan_id
+                    
+                    # Update user subscription status and plan
+                    user.subscription_status = "canceled"
+                    user.subscription_plan_id = free_plan.id
+                    
+                    # Update credits to match Free plan quota
+                    user.credits_balance = free_plan.monthly_quota_credits
+                    
+                    # Mark current period as inactive
+                    period.status = "inactive"
+                    period.is_plan_change = True
+                    session.add(period)
+                    
+                    # Create new billing period with the Free plan
+                    new_period = await self.create_new_billing_period(
+                        session=session,
+                        user=user,
+                        plan=free_plan,
+                        previous_period=period,
+                        previous_plan_id=old_plan_id
+                    )
+                    
+                    session.add(user)
+                    
+                    stats["canceled"] += 1
+                    stats["details"].append({
+                        "period_id": str(period.id),
+                        "user_id": str(user.id),
+                        "status": "canceled_and_downgraded",
+                        "new_plan": free_plan.name,
+                        "new_period_id": str(new_period.id)
+                    })
+                    
+                    logger.info(f"User {user.id} successfully downgraded to Free plan after subscription cancellation")
+                    return
+                elif user.subscription_status != "active":
+                    # Handle other non-active subscription statuses
+                    period.status = "inactive"
+                    session.add(period)
+                    stats["canceled"] += 1
+                    stats["details"].append({
+                        "period_id": str(period.id),
+                        "user_id": str(user.id),
+                        "status": "canceled",
+                        "reason": f"subscription_status={user.subscription_status}"
+                    })
+                    return
+                
+                # Proceed with normal renewal for active subscriptions
+                # Get subscription plan
+                plan = None
+                if user.subscription_plan_id:
+                    plan = await session.get(SubscriptionPlan, user.subscription_plan_id)
+                
+                if not plan:
+                    logger.error(f"Subscription plan not found for user {user.id}")
+                    stats["errors"] += 1
+                    stats["details"].append({
+                        "period_id": str(period.id),
+                        "user_id": str(user.id),
+                        "status": "error",
+                        "reason": "plan_not_found"
+                    })
+                    return
+                
+                # Create new billing period
+                await self.create_new_billing_period(
+                    session=session,
+                    user=user,
+                    plan=plan,
+                    previous_period=period
+                )
+                
+                # Mark expired period as inactive
+                period.status = "inactive"
+                session.add(period)
+                
+                stats["renewed"] += 1
+                stats["details"].append({
+                    "period_id": str(period.id),
+                    "user_id": str(user.id),
+                    "status": "renewed",
+                    "plan": plan.name
+                })
+                
+            except Exception as e:
+                logger.error(f"Error processing billing period {period.id}: {e}")
+                stats["errors"] += 1
+                stats["details"].append({
+                    "period_id": str(period.id),
+                    "user_id": str(period.user_id) if period else "unknown",
+                    "status": "error",
+                    "reason": str(e)
+                })
     
     async def generate_invoice_for_period(
         self, 
@@ -844,96 +939,14 @@ class BillingCycleManager:
                 # Get Stripe service
                 stripe_service = get_stripe_service()
                 
+                # Process invoices with rate limiting
+                tasks = []
                 for invoice in unpaid_invoices:
-                    try:
-                        # Get the user
-                        user = await session.get(User, invoice.user_id)
-                        if not user:
-                            logger.error(f"User {invoice.user_id} not found for invoice {invoice.id}")
-                            stats["errors"] += 1
-                            continue
-                            
-                        # Check Stripe status (it might have been paid but our records aren't updated)
-                        if invoice.stripe_invoice_id:
-                            try:
-                                stripe_invoice = await stripe_service._make_request(
-                                    stripe.Invoice.retrieve,
-                                    invoice.stripe_invoice_id
-                                )
-                                
-                                if stripe_invoice.status == "paid":
-                                    # Update our records
-                                    invoice.status = "paid"
-                                    invoice.paid_at = datetime.now(timezone.utc)
-                                    session.add(invoice)
-                                    
-                                    stats["paid"] += 1
-                                    stats["details"].append({
-                                        "invoice_id": str(invoice.id),
-                                        "user_id": str(user.id),
-                                        "status": "reconciled",
-                                        "amount": invoice.amount
-                                    })
-                                    continue
-                            except Exception as e:
-                                logger.warning(f"Error checking Stripe invoice {invoice.stripe_invoice_id}: {e}")
-                        
-                        # Invoice is truly unpaid - take action based on policy
-                        # Option 1: Suspend user access
-                        if user.subscription_status == "active":
-                            user.subscription_status = "past_due"
-                            session.add(user)
-                            
-                            stats["suspended"] += 1
-                            stats["details"].append({
-                                "invoice_id": str(invoice.id),
-                                "user_id": str(user.id),
-                                "status": "suspended",
-                                "amount": invoice.amount
-                            })
-                            
-                            # Could trigger notification/email to user here
-                        
-                        # Option 2: For very old unpaid invoices, cancel subscription
-                        # This would be for invoices that are extremely overdue (e.g., 30+ days)
-                        extreme_overdue_days = 30
-                        extreme_cutoff = datetime.now(timezone.utc) - timedelta(days=extreme_overdue_days)
-                        
-                        if invoice.created_at < extreme_cutoff and user.subscription_status == "past_due":
-                            if user.stripe_subscription_id:
-                                # Cancel the subscription in Stripe
-                                try:
-                                    await stripe_service._make_request(
-                                        stripe.Subscription.delete,
-                                        user.stripe_subscription_id
-                                    )
-                                    
-                                    # Update user record
-                                    user.subscription_status = "canceled"
-                                    session.add(user)
-                                    
-                                    stats["canceled"] += 1
-                                    stats["details"].append({
-                                        "invoice_id": str(invoice.id),
-                                        "user_id": str(user.id),
-                                        "status": "canceled",
-                                        "amount": invoice.amount,
-                                        "days_overdue": extreme_overdue_days
-                                    })
-                                except Exception as e:
-                                    logger.error(f"Error canceling subscription for user {user.id}: {e}")
-                                    stats["errors"] += 1
-                            
-                    except Exception as e:
-                        logger.error(f"Error processing unpaid invoice {invoice.id}: {e}")
-                        stats["errors"] += 1
-                        stats["details"].append({
-                            "invoice_id": str(invoice.id),
-                            "status": "error",
-                            "reason": str(e)
-                        })
+                    tasks.append(self._process_unpaid_invoice(session, invoice, stripe_service, stats))
+                
+                # Run tasks with concurrency control via semaphore
+                await asyncio.gather(*tasks)
             
-            await session.commit()
             logger.info(f"Completed unpaid invoice processing: {stats['paid']} reconciled, {stats['suspended']} accounts suspended")
             return stats
             
@@ -941,6 +954,106 @@ class BillingCycleManager:
             logger.error(f"Error in handle_unpaid_invoices: {e}")
             stats["global_error"] = str(e)
             return stats
+    
+    async def _process_unpaid_invoice(self, session, invoice, stripe_service, stats):
+        """
+        Process a single unpaid invoice with rate limiting.
+        
+        Args:
+            session: Database session
+            invoice: The invoice to process
+            stripe_service: The Stripe service instance
+            stats: Statistics dictionary to update
+        """
+        # Use the semaphore to limit concurrent API calls
+        async with self._api_semaphore:
+            try:
+                # Get the user
+                user = await session.get(User, invoice.user_id)
+                if not user:
+                    logger.error(f"User {invoice.user_id} not found for invoice {invoice.id}")
+                    stats["errors"] += 1
+                    return
+                    
+                # Check Stripe status (it might have been paid but our records aren't updated)
+                if invoice.stripe_invoice_id:
+                    try:
+                        stripe_invoice = await stripe_service._make_request(
+                            stripe.Invoice.retrieve,
+                            invoice.stripe_invoice_id
+                        )
+                        
+                        if stripe_invoice.status == "paid":
+                            # Update our records
+                            invoice.status = "paid"
+                            invoice.paid_at = datetime.now(timezone.utc)
+                            session.add(invoice)
+                            
+                            stats["paid"] += 1
+                            stats["details"].append({
+                                "invoice_id": str(invoice.id),
+                                "user_id": str(user.id),
+                                "status": "reconciled",
+                                "amount": invoice.amount
+                            })
+                            return
+                    except Exception as e:
+                        logger.warning(f"Error checking Stripe invoice {invoice.stripe_invoice_id}: {e}")
+                
+                # Invoice is truly unpaid - take action based on policy
+                # Option 1: Suspend user access
+                if user.subscription_status == "active":
+                    user.subscription_status = "past_due"
+                    session.add(user)
+                    
+                    stats["suspended"] += 1
+                    stats["details"].append({
+                        "invoice_id": str(invoice.id),
+                        "user_id": str(user.id),
+                        "status": "suspended",
+                        "amount": invoice.amount
+                    })
+                    
+                    # Could trigger notification/email to user here
+                
+                # Option 2: For very old unpaid invoices, cancel subscription
+                # This would be for invoices that are extremely overdue (e.g., 30+ days)
+                extreme_overdue_days = 30
+                extreme_cutoff = datetime.now(timezone.utc) - timedelta(days=extreme_overdue_days)
+                
+                if invoice.created_at < extreme_cutoff and user.subscription_status == "past_due":
+                    if user.stripe_subscription_id:
+                        # Cancel the subscription in Stripe
+                        try:
+                            await stripe_service._make_request(
+                                stripe.Subscription.delete,
+                                user.stripe_subscription_id
+                            )
+                            
+                            # Update user record
+                            user.subscription_status = "canceled"
+                            session.add(user)
+                            
+                            stats["canceled"] += 1
+                            stats["details"].append({
+                                "invoice_id": str(invoice.id),
+                                "user_id": str(user.id),
+                                "status": "canceled",
+                                "amount": invoice.amount,
+                                "days_overdue": extreme_overdue_days
+                            })
+                        except Exception as e:
+                            logger.error(f"Error canceling subscription for user {user.id}: {e}")
+                            stats["errors"] += 1
+                    
+            except Exception as e:
+                logger.error(f"Error processing unpaid invoice {invoice.id}: {e}")
+                stats["errors"] += 1
+                stats["details"].append({
+                    "invoice_id": str(invoice.id),
+                    "status": "error",
+                    "reason": str(e)
+                })
     
     async def manually_generate_invoice(self, user_id: UUID, description: str = None, amount: float = 0.0, items: List[Dict[str, Any]] = None) -> Dict[str, Any]:
         """

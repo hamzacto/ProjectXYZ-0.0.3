@@ -13,6 +13,8 @@ const useAuthStore = create<AuthStoreType>((set, get) => ({
   autoLogin: null,
   apiKey: cookies.get("apikey_tkn_lflw"),
   authenticationErrorCount: 0,
+  has_chosen_plan: false,
+  isLoadingUser: true,
 
   setIsAdmin: (isAdmin) => set({ isAdmin }),
   setIsAuthenticated: (isAuthenticated) => set({ isAuthenticated }),
@@ -22,10 +24,13 @@ const useAuthStore = create<AuthStoreType>((set, get) => ({
   setApiKey: (apiKey) => set({ apiKey }),
   setAuthenticationErrorCount: (authenticationErrorCount) =>
     set({ authenticationErrorCount }),
+  setHasChosenPlan: (has_chosen_plan) => set({ has_chosen_plan }),
+  setIsLoadingUser: (isLoadingUser) => set({ isLoadingUser }),
 
   logout: async () => {
     get().setIsAuthenticated(false);
     get().setIsAdmin(false);
+    get().setHasChosenPlan(false);
 
     set({
       isAdmin: false,
@@ -34,6 +39,7 @@ const useAuthStore = create<AuthStoreType>((set, get) => ({
       isAuthenticated: false,
       autoLogin: false,
       apiKey: null,
+      has_chosen_plan: false,
     });
   },
 }));
